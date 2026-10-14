@@ -1,17 +1,22 @@
-// Research progression simulator. Pure functions, no DOM: runs in the browser
-// and under `node --test`.
+// Research progression engine. Pure logic, no DOM: runs in the browser and
+// under `node --test`.
+//
+// `Lab` is the game state: time, stock, research levels and queues. You can
+// drive it by hand (start research, spend speedups, skip time), which is what
+// the "Play it yourself" mode does. `simulate()` drives the same Lab with an
+// auto-pilot that fills every free queue with the best affordable research.
 
 import { SCALING } from "./data.js";
 
-const DAY = 1440; // minutes
-const RESOURCES = ["food", "wood", "steel", "badges"];
+export const DAY = 1440; // minutes
+export const RESOURCES = ["food", "wood", "steel", "badges"];
 
 export function buildCatalog(trees, scaling = SCALING) {
   const nodes = [];
   const byId = new Map();
   for (const tree of trees) {
     tree.tiers.forEach((tier, t) => {
-      tier.forEach(([name, stat, perLevel, maxLevel], i) => {
+      tier.forEach(([name, stat, perLevel, maxLevel, description = ""], i) => {
         const node = {
           id: `${tree.id}.${t}.${i}`,
           treeId: tree.id,
@@ -20,11 +25,14 @@ export function buildCatalog(trees, scaling = SCALING) {
           stat,
           perLevel,
           maxLevel,
+          description,
           labRequired: tree.unlockLab + t * tree.labStep,
           prereqs: t === 0 ? [] : tree.tiers[t - 1].map((p, j) => ({
             id: `${tree.id}.${t - 1}.${j}`,
             level: Math.ceil(p[3] / 2),
           })),
+          // Filled in below: nodes that list this one as a prerequisite.
+          unlocks: [],
           power: scaling.powerPerLevel * (t + 1),
           cost(level) {
             const m = scaling.tierCost ** t * scaling.levelCost ** (level - 1);
@@ -40,6 +48,9 @@ export function buildCatalog(trees, scaling = SCALING) {
         byId.set(node.id, node);
       });
     });
+  }
+  for (const node of nodes) {
+    for (const p of node.prereqs) byId.get(p.id).unlocks.push({ id: node.id, level: p.level });
   }
   return { trees, nodes, byId };
 }
@@ -80,58 +91,231 @@ export function blocker(catalog, node, levels, labLevel, complete) {
   return null;
 }
 
-function canAfford(stock, cost) {
-  return RESOURCES.every((r) => stock[r] >= cost[r]);
-}
-
 export function labLevelAt(config, minute) {
   const gained = Math.floor(minute / (config.hoursPerLabLevel * 60));
   return Math.min(config.labMaxLevel, config.labStartLevel + gained);
 }
 
-function queueCountAt(config, minute) {
+export function queueCountAt(config, minute) {
   const second = config.secondQueueDay > 0 && minute >= config.secondQueueDay * DAY ? 1 : 0;
   return config.queues + second;
 }
 
+// Timer after research speed, before alliance helps and speedups.
+export function researchDuration(baseMinutes, speedPct) {
+  return baseMinutes / (1 + speedPct / 100);
+}
+
+const SAVED_FIELDS = [
+  "t", "levels", "stock", "spent", "queues", "events", "daily", "treeDone", "power",
+  "speedupPool", "speedupsUsed", "helpsSaved", "idleQueueMinutes", "queueMinutes", "idleBy", "nextDay",
+];
+
+export class Lab {
+  constructor(catalog, config) {
+    this.catalog = catalog;
+    this.config = config;
+    this.t = 0;
+    this.levels = {};
+    this.stock = { ...config.startingStock };
+    this.spent = { food: 0, wood: 0, steel: 0, badges: 0 };
+    this.queues = []; // { nodeId, level, remaining, duration, start }
+    this.events = []; // finished levels, in order
+    this.daily = []; // one snapshot per day boundary
+    this.treeDone = {}; // treeId -> minute finished
+    this.power = 0;
+    this.speedupPool = 0;
+    this.speedupsUsed = 0;
+    this.helpsSaved = 0;
+    this.idleQueueMinutes = 0;
+    this.queueMinutes = 0;
+    this.idleBy = { resources: 0, locked: 0 };
+    this.idleReason = "locked"; // set by whoever is choosing research
+    this.nextDay = 0;
+    this.#rollDay();
+  }
+
+  static fromJSON(catalog, config, data) {
+    const lab = new Lab(catalog, config);
+    for (const key of SAVED_FIELDS) if (key in data) lab[key] = data[key];
+    const known = (id) => catalog.byId.has(id);
+    if (!Object.keys(lab.levels).every(known) || !lab.queues.every((q) => known(q.nodeId))) return null;
+    return lab;
+  }
+
+  toJSON() {
+    return Object.fromEntries(SAVED_FIELDS.map((k) => [k, this[k]]));
+  }
+
+  get labLevel() {
+    return labLevelAt(this.config, this.t);
+  }
+
+  get queueCount() {
+    return queueCountAt(this.config, this.t);
+  }
+
+  get day() {
+    return this.t / DAY;
+  }
+
+  researchSpeed() {
+    return this.config.baseResearchSpeed + (statTotals(this.catalog, this.levels).researchSpeed || 0);
+  }
+
+  completeTrees() {
+    return new Map(this.catalog.trees.map((tr) => [tr.id, tr.id in this.treeDone]));
+  }
+
+  // Everything the UI and the auto-pilot need to know about a node's next level.
+  // state: "maxed" | "busy" | "locked" | "short" | "queueFull" | "ready"
+  // `ctx` lets a caller checking many nodes compute shared values once.
+  status(node, ctx = {}) {
+    const current = this.levels[node.id] || 0;
+    const level = current + 1;
+    if (current >= node.maxLevel) return { state: "maxed", level: current };
+    const cost = node.cost(level);
+    const time = node.time(level);
+    const speed = ctx.speed ?? this.researchSpeed();
+    const base = { level, cost, time, duration: researchDuration(time, speed) };
+    if (this.queues.some((q) => q.nodeId === node.id)) return { ...base, state: "busy", reason: "Researching now" };
+    const why = blocker(this.catalog, node, this.levels, this.labLevel, ctx.complete ?? this.completeTrees());
+    if (why) return { ...base, state: "locked", reason: `Needs ${why}` };
+    const shortfall = {};
+    for (const r of RESOURCES) if (this.stock[r] < cost[r]) shortfall[r] = cost[r] - this.stock[r];
+    if (Object.keys(shortfall).length) return { ...base, state: "short", shortfall, reason: "Not enough resources" };
+    if (this.queues.length >= this.queueCount) return { ...base, state: "queueFull", reason: "All research queues are busy" };
+    return { ...base, state: "ready", reason: null };
+  }
+
+  start(node) {
+    const s = this.status(node);
+    if (s.state !== "ready") throw new Error(`${node.name}: ${s.reason}`);
+    for (const r of RESOURCES) {
+      this.stock[r] -= s.cost[r];
+      this.spent[r] += s.cost[r];
+    }
+    // Alliance helps land right away.
+    let remaining = s.duration;
+    for (let h = 0; h < this.config.allianceHelps && remaining > 0; h++) {
+      const cut = Math.min(remaining, Math.max(this.config.helpMinutes, s.duration * 0.01));
+      remaining -= cut;
+      this.helpsSaved += cut;
+    }
+    this.queues.push({ nodeId: node.id, level: s.level, remaining, duration: s.duration, start: this.t });
+    return s;
+  }
+
+  // Spend speedups from the pool on one queue. Finishes it now if fully covered.
+  speedUp(index, minutes = Infinity) {
+    const q = this.queues[index];
+    if (!q) return 0;
+    const use = Math.min(this.speedupPool, q.remaining, minutes);
+    q.remaining -= use;
+    this.speedupPool -= use;
+    this.speedupsUsed += use;
+    this.#completeFinished();
+    return use;
+  }
+
+  // Auto-pilot speedups: spend the pool on the research closest to finishing.
+  autoSpeedup() {
+    this.queues.sort((a, b) => a.remaining - b.remaining);
+    for (const q of this.queues) {
+      if (this.speedupPool <= 0) break;
+      const use = Math.min(this.speedupPool, q.remaining);
+      q.remaining -= use;
+      this.speedupPool -= use;
+      this.speedupsUsed += use;
+    }
+  }
+
+  nextFinish() {
+    if (!this.queues.length) return null;
+    return this.t + Math.min(...this.queues.map((q) => q.remaining));
+  }
+
+  // Move time forward to `target`, collecting income, finishing research and
+  // crossing day boundaries along the way. Returns the levels that finished.
+  advanceTo(target) {
+    const before = this.events.length;
+    this.#completeFinished();
+    this.#rollDay();
+    while (this.t < target) {
+      let next = Math.min(target, this.nextDay * DAY);
+      for (const q of this.queues) next = Math.min(next, this.t + q.remaining);
+      const dt = Math.max(next - this.t, 0);
+
+      for (const r of RESOURCES) this.stock[r] += (this.config.income[r] * dt) / DAY;
+      const slots = this.queueCount;
+      this.queueMinutes += slots * dt;
+      const idle = Math.max(slots - this.queues.length, 0) * dt;
+      this.idleQueueMinutes += idle;
+      this.idleBy[this.idleReason] += idle;
+      for (const q of this.queues) q.remaining -= dt;
+      this.t = next;
+
+      this.#completeFinished();
+      this.#rollDay();
+    }
+    return this.events.slice(before);
+  }
+
+  #completeFinished() {
+    for (let i = this.queues.length - 1; i >= 0; i--) {
+      const q = this.queues[i];
+      if (q.remaining > 1e-9) continue;
+      this.queues.splice(i, 1);
+      const node = this.catalog.byId.get(q.nodeId);
+      this.levels[q.nodeId] = q.level;
+      this.power += node.power;
+      this.events.push({
+        minute: this.t,
+        nodeId: q.nodeId,
+        treeId: node.treeId,
+        name: node.name,
+        level: q.level,
+        start: q.start,
+        duration: q.duration,
+      });
+      if (!(node.treeId in this.treeDone) && isTreeComplete(this.catalog, node.treeId, this.levels)) {
+        this.treeDone[node.treeId] = this.t;
+      }
+    }
+  }
+
+  // At each day boundary: record the day and grant that day's speedups.
+  #rollDay() {
+    while (this.t >= this.nextDay * DAY) {
+      this.daily.push({
+        day: this.nextDay,
+        power: this.power,
+        labLevel: labLevelAt(this.config, this.nextDay * DAY),
+        researchSpeed: this.researchSpeed(),
+        stock: { ...this.stock },
+        completed: this.events.length,
+      });
+      this.speedupPool += this.config.speedupMinutesPerDay;
+      this.nextDay += 1;
+    }
+  }
+}
+
+// Auto-pilot: run a Lab for `config.days`, filling every free queue by the
+// configured strategy and spending speedups as soon as they arrive.
 export function simulate(catalog, config) {
+  const lab = new Lab(catalog, config);
   const horizon = config.days * DAY;
-  const levels = {};
-  const stock = { ...config.startingStock };
-  const spent = { food: 0, wood: 0, steel: 0, badges: 0 };
-  const queues = []; // { node, level, remaining, duration, start }
-  const events = [];
-  const daily = [];
-  const treeDone = {};
   const lastStartByTree = {};
   const priorityIndex = new Map(config.priority.map((id, i) => [id, i]));
-  let speedupPool = 0;
-  let speedupsUsed = 0;
-  let helpsSaved = 0;
-  let idleQueueMinutes = 0;
-  let queueMinutes = 0;
-  const idleBy = { resources: 0, locked: 0 };
-  let lastIdleReason = "locked";
-  let power = 0;
-  let t = 0;
-  let nextDay = 0;
 
-  const researchSpeed = () => config.baseResearchSpeed + (statTotals(catalog, levels).researchSpeed || 0);
-
-  function candidates(labLevel) {
-    const busy = new Set(queues.map((q) => q.node.id));
-    const complete = new Map(catalog.trees.map((tr) => [tr.id, tr.id in treeDone]));
+  function candidates() {
+    const ctx = { complete: lab.completeTrees(), speed: lab.researchSpeed() };
     const list = [];
     for (const node of catalog.nodes) {
-      if (busy.has(node.id)) continue;
-      if (blocker(catalog, node, levels, labLevel, complete)) continue;
-      const level = (levels[node.id] || 0) + 1;
-      const cost = node.cost(level);
-      if (!canAfford(stock, cost)) {
-        lastIdleReason = "resources";
-        continue;
-      }
-      list.push({ node, level, cost, time: node.time(level) });
+      const s = lab.status(node, ctx);
+      if (s.state === "short") lab.idleReason = "resources";
+      if (s.state === "ready") list.push({ node, time: s.time });
     }
     return list;
   }
@@ -155,109 +339,38 @@ export function simulate(catalog, config) {
     return [...list].sort(byPriority)[0];
   }
 
-  function snapshotDay(day) {
-    daily.push({
-      day,
-      power,
-      labLevel: labLevelAt(config, day * DAY),
-      researchSpeed: researchSpeed(),
-      stock: { ...stock },
-      completed: events.length,
-    });
-  }
-
-  while (t < horizon) {
-    // Day boundary: grant speedups and record the day's state.
-    if (t >= nextDay * DAY) {
-      snapshotDay(nextDay);
-      speedupPool += config.speedupMinutesPerDay;
-      nextDay += 1;
-    }
-
-    const labLevel = labLevelAt(config, t);
-
-    // Fill idle queues.
-    lastIdleReason = "locked";
-    while (queues.length < queueCountAt(config, t)) {
-      const choice = pick(candidates(labLevel));
+  while (lab.t < horizon) {
+    lab.idleReason = "locked";
+    while (lab.queues.length < lab.queueCount) {
+      const choice = pick(candidates());
       if (!choice) break;
-      for (const r of RESOURCES) {
-        stock[r] -= choice.cost[r];
-        spent[r] += choice.cost[r];
-      }
-      const duration = choice.time / (1 + researchSpeed() / 100);
-      let remaining = duration;
-      for (let h = 0; h < config.allianceHelps && remaining > 0; h++) {
-        const cut = Math.min(remaining, Math.max(config.helpMinutes, duration * 0.01));
-        remaining -= cut;
-        helpsSaved += cut;
-      }
-      queues.push({ node: choice.node, level: choice.level, remaining, duration, start: t });
-      lastStartByTree[choice.node.treeId] = t;
+      lab.start(choice.node);
+      lastStartByTree[choice.node.treeId] = lab.t;
     }
+    lab.autoSpeedup();
 
-    // Spend speedups on the research closest to finishing.
-    queues.sort((a, b) => a.remaining - b.remaining);
-    for (const q of queues) {
-      if (speedupPool <= 0) break;
-      const use = Math.min(speedupPool, q.remaining);
-      q.remaining -= use;
-      speedupPool -= use;
-      speedupsUsed += use;
-    }
-
-    // Advance to the next event: a completion, the next hour (income may make
-    // something affordable), the next day, or the horizon.
-    const nextHour = (Math.floor(t / 60) + 1) * 60;
-    let next = Math.min(nextHour, nextDay * DAY, horizon);
-    for (const q of queues) next = Math.min(next, t + q.remaining);
-    const dt = Math.max(next - t, 0);
-
-    for (const r of RESOURCES) stock[r] += (config.income[r] * dt) / DAY;
-    queueMinutes += queueCountAt(config, t) * dt;
-    const idle = (queueCountAt(config, t) - queues.length) * dt;
-    idleQueueMinutes += idle;
-    idleBy[lastIdleReason] += idle;
-    for (const q of queues) q.remaining -= dt;
-    t = next;
-
-    // Complete finished research.
-    for (let i = queues.length - 1; i >= 0; i--) {
-      const q = queues[i];
-      if (q.remaining > 1e-9) continue;
-      queues.splice(i, 1);
-      levels[q.node.id] = q.level;
-      power += q.node.power;
-      events.push({
-        minute: t,
-        nodeId: q.node.id,
-        treeId: q.node.treeId,
-        name: q.node.name,
-        level: q.level,
-        start: q.start,
-        duration: q.duration,
-      });
-      if (!(q.node.treeId in treeDone) && isTreeComplete(catalog, q.node.treeId, levels)) {
-        treeDone[q.node.treeId] = t;
-      }
-    }
+    // Next stop: a completion, the next hour (income may make something
+    // affordable), the next day, or the end of the run.
+    const nextHour = (Math.floor(lab.t / 60) + 1) * 60;
+    let next = Math.min(nextHour, lab.nextDay * DAY, horizon);
+    for (const q of lab.queues) next = Math.min(next, lab.t + q.remaining);
+    lab.advanceTo(next);
   }
-  snapshotDay(config.days);
 
   return {
-    events,
-    daily,
-    treeDone,
-    levels,
-    stock,
-    spent,
-    power,
-    speedupsUsed,
-    helpsSaved,
-    idleQueueMinutes,
-    idleBy,
-    queueMinutes,
-    inProgress: queues.map((q) => ({ nodeId: q.node.id, level: q.level, remaining: q.remaining })),
+    events: lab.events,
+    daily: lab.daily,
+    treeDone: lab.treeDone,
+    levels: lab.levels,
+    stock: lab.stock,
+    spent: lab.spent,
+    power: lab.power,
+    speedupsUsed: lab.speedupsUsed,
+    helpsSaved: lab.helpsSaved,
+    idleQueueMinutes: lab.idleQueueMinutes,
+    idleBy: lab.idleBy,
+    queueMinutes: lab.queueMinutes,
+    inProgress: lab.queues.map((q) => ({ nodeId: q.nodeId, level: q.level, remaining: q.remaining })),
   };
 }
 
@@ -272,6 +385,7 @@ export function levelsAt(events, minute) {
 }
 
 export function formatDuration(minutes) {
+  if (minutes < 1) return minutes > 0 ? "<1m" : "0m";
   if (minutes < 60) return `${Math.round(minutes)}m`;
   const d = Math.floor(minutes / DAY);
   const h = Math.floor((minutes % DAY) / 60);
