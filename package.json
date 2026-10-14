@@ -1,1 +1,1 @@
-{"type":"module","name":"last-z-research-sim","private":true,"scripts":{"test":"node --test tests/*.test.js","start":"npx --yes serve@14.2.4 ."}}
+{"type":"module","name":"last-z-research-sim","private":true,"scripts":{"test":"node --test tests/*.test.js","start":"npx --yes serve@14.2.4 .","fetch-sources":"sh scripts/fetch-sources.sh","build-data":"node scripts/build-research-data.mjs"}}

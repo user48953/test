@@ -6,82 +6,137 @@
 // the "Play it yourself" mode does. `simulate()` drives the same Lab with an
 // auto-pilot that fills every free queue with the best affordable research.
 
-import { SCALING } from "./data.js";
+import { TIMER, RESEARCH_SPEED } from "./data.js";
 
 export const DAY = 1440; // minutes
-export const RESOURCES = ["food", "wood", "steel", "badges"];
+export const RESOURCES = ["electricity", "zents", "badges"];
 
-export function buildCatalog(trees, scaling = SCALING) {
+// Turns the source trees (see research-data.js) into research nodes.
+// A node's next level needs every parent maxed, the tree's own requirements
+// and the node's Laboratory level (or the tree's, when the node has none).
+export function buildCatalog(trees, timer = TIMER) {
   const nodes = [];
   const byId = new Map();
+  const treeById = new Map();
   for (const tree of trees) {
-    tree.tiers.forEach((tier, t) => {
-      tier.forEach(([name, stat, perLevel, maxLevel, description = ""], i) => {
-        const node = {
-          id: `${tree.id}.${t}.${i}`,
-          treeId: tree.id,
-          tier: t,
-          name,
-          stat,
-          perLevel,
-          maxLevel,
-          description,
-          labRequired: tree.unlockLab + t * tree.labStep,
-          prereqs: t === 0 ? [] : tree.tiers[t - 1].map((p, j) => ({
-            id: `${tree.id}.${t - 1}.${j}`,
-            level: Math.ceil(p[3] / 2),
-          })),
-          // Filled in below: nodes that list this one as a prerequisite.
-          unlocks: [],
-          power: scaling.powerPerLevel * (t + 1),
-          cost(level) {
-            const m = scaling.tierCost ** t * scaling.levelCost ** (level - 1);
-            const c = {};
-            for (const r of RESOURCES) c[r] = Math.round(tree.baseCost[r] * m);
-            return c;
-          },
-          time(level) {
-            return tree.baseCost.time * scaling.tierTime ** t * scaling.levelTime ** (level - 1);
-          },
-        };
-        nodes.push(node);
-        byId.set(node.id, node);
-      });
-    });
+    treeById.set(tree.id, tree);
+    for (const src of tree.nodes) {
+      const gain = (level) => src.power[level - 1] - (level > 1 ? src.power[level - 2] : 0);
+      const node = {
+        id: `${tree.id}.${src.id}`,
+        treeId: tree.id,
+        tier: src.tier,
+        name: src.name,
+        maxLevel: src.maxLevel,
+        effects: src.effects,
+        source: src.source,
+        estCost: new Set(src.estCost || []),
+        estPower: Boolean(src.estPower),
+        estLinks: Boolean(src.estLinks),
+        estLab: Boolean(src.estLab),
+        labRequired: src.lab ?? tree.lab ?? 1,
+        prereqs: src.parents.map((p) => ({ id: `${tree.id}.${p}`, level: 0 })),
+        // Filled in below: nodes that list this one as a prerequisite.
+        unlocks: [],
+        cost(level) {
+          const c = {};
+          for (const r of RESOURCES) c[r] = src.cost[r]?.[level - 1] ?? 0;
+          return c;
+        },
+        // Power added by one level, and the total at a level.
+        powerGain: gain,
+        powerAt: (level) => (level > 0 ? src.power[level - 1] : 0),
+        // Not published by any source: estimated from the power a level adds.
+        time(level) {
+          return Math.max(timer.minMinutes, timer.minutesPerPower * gain(level));
+        },
+      };
+      nodes.push(node);
+      byId.set(node.id, node);
+    }
   }
   for (const node of nodes) {
-    for (const p of node.prereqs) byId.get(p.id).unlocks.push({ id: node.id, level: p.level });
+    for (const p of node.prereqs) {
+      const parent = byId.get(p.id);
+      p.level = parent.maxLevel;
+      parent.unlocks.push({ id: node.id, level: p.level });
+    }
   }
-  return { trees, nodes, byId };
+  const levelsByTree = new Map(trees.map((t) => [t.id, 0]));
+  for (const n of nodes) levelsByTree.set(n.treeId, levelsByTree.get(n.treeId) + n.maxLevel);
+  return { trees, nodes, byId, treeById, levelsByTree };
 }
 
-export function statTotals(catalog, levels) {
-  const totals = {};
+// Bonus totals from every researched level, one entry per bonus name and
+// unit, plus the things research has unlocked.
+export function bonusTotals(catalog, levels) {
+  const totals = new Map();
+  const unlocked = [];
   for (const node of catalog.nodes) {
     const lvl = levels[node.id] || 0;
-    if (lvl) totals[node.stat] = (totals[node.stat] || 0) + lvl * node.perLevel;
+    if (!lvl) continue;
+    for (const e of node.effects) {
+      if (e.text !== undefined) {
+        unlocked.push(e.text);
+        continue;
+      }
+      if (!e.values) continue;
+      const key = `${e.label}|${e.unit}`;
+      const t = totals.get(key) || { label: e.label, unit: e.unit, value: 0 };
+      t.value += e.values[lvl - 1] ?? 0;
+      totals.set(key, t);
+    }
   }
-  return totals;
+  return { totals: [...totals.values()], unlocked };
+}
+
+// Research speed % from research alone.
+export function researchBonus(catalog, levels) {
+  let pct = 0;
+  for (const node of catalog.nodes) {
+    const lvl = levels[node.id] || 0;
+    if (!lvl) continue;
+    for (const e of node.effects) if (e.label === RESEARCH_SPEED && e.values) pct += e.values[lvl - 1] ?? 0;
+  }
+  return pct;
+}
+
+// Share of a tree's levels researched, 0..1.
+export function treeProgress(catalog, treeId, levels) {
+  let got = 0;
+  for (const n of catalog.nodes) if (n.treeId === treeId) got += Math.min(levels[n.id] || 0, n.maxLevel);
+  return got / catalog.levelsByTree.get(treeId);
+}
+
+export function progressMap(catalog, levels) {
+  const got = new Map(catalog.trees.map((t) => [t.id, 0]));
+  for (const n of catalog.nodes) got.set(n.treeId, got.get(n.treeId) + Math.min(levels[n.id] || 0, n.maxLevel));
+  return new Map(catalog.trees.map((t) => [t.id, got.get(t.id) / catalog.levelsByTree.get(t.id)]));
 }
 
 export function isTreeComplete(catalog, treeId, levels) {
-  return catalog.nodes
-    .filter((n) => n.treeId === treeId)
-    .every((n) => (levels[n.id] || 0) >= n.maxLevel);
+  return treeProgress(catalog, treeId, levels) >= 1;
 }
 
+// "New Home at 50%", or "Shelter Building finished" for 100%.
+export function treeRequirementText(catalog, req) {
+  const name = catalog.treeById.get(req.id).name;
+  return req.pct >= 100 ? `${name} finished` : `${name} at ${req.pct}%`;
+}
+
+// Whether `progress` (0..1) meets a percentage requirement. The tolerance
+// keeps exact shares like 75/150 from failing on rounding.
+export const meetsPct = (progress, pct) => progress * 100 >= pct - 1e-9;
+
 // Why a node's next level can't be started right now (null = it can, ignoring cost).
-// `complete` optionally caches tree completion: Map(treeId -> boolean).
-export function blocker(catalog, node, levels, labLevel, complete) {
+// `progress` optionally caches tree progress: Map(treeId -> 0..1).
+export function blocker(catalog, node, levels, labLevel, progress) {
   const lvl = levels[node.id] || 0;
   if (lvl >= node.maxLevel) return "maxed";
-  const tree = catalog.trees.find((t) => t.id === node.treeId);
-  const done = (id) => complete?.get(id) ?? isTreeComplete(catalog, id, levels);
-  const missing = tree.requires.filter((id) => !done(id));
-  if (missing.length) {
-    const names = missing.map((id) => catalog.trees.find((t) => t.id === id).name);
-    return `Complete ${names.join(", ")}`;
-  }
+  const tree = catalog.treeById.get(node.treeId);
+  const share = (id) => progress?.get(id) ?? treeProgress(catalog, id, levels);
+  const missing = tree.requires.filter((r) => !meetsPct(share(r.id), r.pct));
+  if (missing.length) return missing.map((r) => treeRequirementText(catalog, r)).join(", ");
   if (labLevel < node.labRequired) return `Laboratory Lv ${node.labRequired}`;
   for (const p of node.prereqs) {
     if ((levels[p.id] || 0) < p.level) {
@@ -118,7 +173,7 @@ export class Lab {
     this.t = 0;
     this.levels = {};
     this.stock = { ...config.startingStock };
-    this.spent = { food: 0, wood: 0, steel: 0, badges: 0 };
+    this.spent = Object.fromEntries(RESOURCES.map((r) => [r, 0]));
     this.queues = []; // { nodeId, level, remaining, duration, start }
     this.events = []; // finished levels, in order
     this.daily = []; // one snapshot per day boundary
@@ -160,11 +215,11 @@ export class Lab {
   }
 
   researchSpeed() {
-    return this.config.baseResearchSpeed + (statTotals(this.catalog, this.levels).researchSpeed || 0);
+    return this.config.baseResearchSpeed + researchBonus(this.catalog, this.levels);
   }
 
-  completeTrees() {
-    return new Map(this.catalog.trees.map((tr) => [tr.id, tr.id in this.treeDone]));
+  treeProgress() {
+    return progressMap(this.catalog, this.levels);
   }
 
   // Everything the UI and the auto-pilot need to know about a node's next level.
@@ -179,10 +234,10 @@ export class Lab {
     const speed = ctx.speed ?? this.researchSpeed();
     const base = { level, cost, time, duration: researchDuration(time, speed) };
     if (this.queues.some((q) => q.nodeId === node.id)) return { ...base, state: "busy", reason: "Researching now" };
-    const why = blocker(this.catalog, node, this.levels, this.labLevel, ctx.complete ?? this.completeTrees());
+    const why = blocker(this.catalog, node, this.levels, this.labLevel, ctx.progress ?? this.treeProgress());
     if (why) return { ...base, state: "locked", reason: `Needs ${why}` };
     const shortfall = {};
-    for (const r of RESOURCES) if (this.stock[r] < cost[r]) shortfall[r] = cost[r] - this.stock[r];
+    for (const r of RESOURCES) if ((this.stock[r] || 0) < cost[r]) shortfall[r] = cost[r] - (this.stock[r] || 0);
     if (Object.keys(shortfall).length) return { ...base, state: "short", shortfall, reason: "Not enough resources" };
     if (this.queues.length >= this.queueCount) return { ...base, state: "queueFull", reason: "All research queues are busy" };
     return { ...base, state: "ready", reason: null };
@@ -246,7 +301,7 @@ export class Lab {
       for (const q of this.queues) next = Math.min(next, this.t + q.remaining);
       const dt = Math.max(next - this.t, 0);
 
-      for (const r of RESOURCES) this.stock[r] += (this.config.income[r] * dt) / DAY;
+      for (const r of RESOURCES) this.stock[r] = (this.stock[r] || 0) + ((this.config.income[r] || 0) * dt) / DAY;
       const slots = this.queueCount;
       this.queueMinutes += slots * dt;
       const idle = Math.max(slots - this.queues.length, 0) * dt;
@@ -268,7 +323,7 @@ export class Lab {
       this.queues.splice(i, 1);
       const node = this.catalog.byId.get(q.nodeId);
       this.levels[q.nodeId] = q.level;
-      this.power += node.power;
+      this.power += node.powerGain(q.level);
       this.events.push({
         minute: this.t,
         nodeId: q.nodeId,
@@ -310,9 +365,12 @@ export function simulate(catalog, config) {
   const priorityIndex = new Map(config.priority.map((id, i) => [id, i]));
 
   function candidates() {
-    const ctx = { complete: lab.completeTrees(), speed: lab.researchSpeed() };
+    const ctx = { progress: lab.treeProgress(), speed: lab.researchSpeed() };
+    const labLevel = lab.labLevel;
     const list = [];
     for (const node of catalog.nodes) {
+      // Most research is locked at any moment: rule it out before pricing it.
+      if (blocker(catalog, node, lab.levels, labLevel, ctx.progress)) continue;
       const s = lab.status(node, ctx);
       if (s.state === "short") lab.idleReason = "resources";
       if (s.state === "ready") list.push({ node, time: s.time });

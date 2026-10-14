@@ -1,18 +1,20 @@
-import { TREES, DEFAULT_CONFIG, STATS } from "./data.js";
+import { TREES, DEFAULT_CONFIG, UNPUBLISHED, RESEARCH_SPEED } from "./data.js";
 import {
-  DAY, RESOURCES, Lab, buildCatalog, simulate, levelsAt, blocker, labLevelAt, isTreeComplete,
-  statTotals, researchDuration, formatDuration,
+  DAY, RESOURCES, Lab, buildCatalog, simulate, levelsAt, blocker, labLevelAt, progressMap,
+  bonusTotals, researchBonus, treeProgress, treeRequirementText, meetsPct, researchDuration, formatDuration,
 } from "./sim.js";
 
-const STORAGE_KEY = "lastz-research-sim:v1";
-const PLAY_KEY = "lastz-research-sim:play:v1";
+// v2: the trees were rebuilt from the four sources, so saves from the old
+// made-up trees no longer apply.
+const STORAGE_KEY = "lastz-research-sim:v2";
+const PLAY_KEY = "lastz-research-sim:play:v2";
 const TAB_KEY = "lastz-research-sim:tab:v2";
-const PLAN_KEY = "lastz-research-sim:plan:v1";
+const PLAN_KEY = "lastz-research-sim:plan:v2";
 const RULES_KEY = "lastz-research-sim:rules";
 const catalog = buildCatalog(TREES);
 const treeById = new Map(TREES.map((t) => [t.id, t]));
 const totalLevels = catalog.nodes.reduce((sum, n) => sum + n.maxLevel, 0);
-const RES_LABEL = { food: "Food", wood: "Wood", steel: "Steel", badges: "Badges" };
+const RES_LABEL = { electricity: "Electricity", zents: "Zents", badges: "Badges" };
 
 const ICONS = {
   check: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.5l2.5 2.5L10 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -22,11 +24,10 @@ const ICONS = {
   bolt: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1L2.5 7H6l-1 4 4.5-6H6z" fill="currentColor"/></svg>',
 };
 
-// Resource glyphs: wheat, log, ingot, medal.
+// Resource glyphs: lightning bolt, coin, medal.
 const RES_ICONS = {
-  food: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M6 11.5V3.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><ellipse cx="6" cy="2.4" rx="1.1" ry="1.8" fill="currentColor"/><ellipse cx="4.2" cy="5" rx="1" ry="1.8" transform="rotate(-35 4.2 5)" fill="currentColor"/><ellipse cx="7.8" cy="5" rx="1" ry="1.8" transform="rotate(35 7.8 5)" fill="currentColor"/><ellipse cx="4.2" cy="8" rx="1" ry="1.8" transform="rotate(-35 4.2 8)" fill="currentColor"/><ellipse cx="7.8" cy="8" rx="1" ry="1.8" transform="rotate(35 7.8 8)" fill="currentColor"/></svg>',
-  wood: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.8 3.2h6.4M2.8 8.8h6.4" stroke="currentColor" stroke-width="1.2"/><path d="M2.8 3.2a2.8 2.8 0 000 5.6" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="9.2" cy="6" r="2.8" fill="currentColor"/><circle cx="9.2" cy="6" r="1" fill="var(--surface)"/></svg>',
-  steel: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M1 10h10L9 4.5H3z" fill="currentColor"/><path d="M3.6 3h4.8L7.6 1.2H4.4z" fill="currentColor" opacity="0.6"/></svg>',
+  electricity: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.2 0.6L2.2 6.9h3.2L4.6 11.4l5.2-6.6H6.5z" fill="currentColor"/></svg>',
+  zents: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill="currentColor"/><path d="M4 4h4L4 8h4" fill="none" stroke="var(--surface)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   badges: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 0.8l2.5 4 2.5-4" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="6" cy="7.8" r="3.4" fill="currentColor"/><path d="M6 5.9l.6 1.2 1.3.2-1 .9.3 1.3L6 8.9l-1.2.6.3-1.3-1-.9 1.3-.2z" fill="var(--surface)"/></svg>',
 };
 
@@ -75,10 +76,19 @@ function clock(minute) {
   return `Day ${day + 1} · ${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-function effectText(stat, value) {
-  const s = STATS[stat];
-  const v = Math.round(value * 10) / 10;
-  return `+${fmt.format(v)}${s.unit}`;
+function bonusValue(value, unit) {
+  return `+${fmt.format(Math.round(value * 10) / 10)}${unit}`;
+}
+
+// One bonus at a given level: "Construction Speed +5%", "Unlocks Rider Camp".
+function effectText(e, level) {
+  if (e.text !== undefined) return `${e.label} ${e.text}`;
+  if (!e.values) return `${e.label} (amount not published)`;
+  return `${e.label} ${bonusValue(e.values[level - 1], e.unit)}`;
+}
+
+function effectsAt(node, level) {
+  return node.effects.length ? node.effects.map((e) => effectText(e, level)).join(" · ") : "No bonus listed";
 }
 
 function costText(cost) {
@@ -86,17 +96,25 @@ function costText(cost) {
   return parts.length ? parts.join(" · ") : "Free";
 }
 
+// "≈" marks numbers a source didn't publish.
+const EST = "≈";
+const isEstCost = (node, level) => node.estCost.has(level);
+function estMark(on, what = "Estimate: not published by the sources") {
+  return on ? el("abbr", { class: "est", title: what }, EST) : null;
+}
+
 function resIcon(r) {
   return el("span", { class: `ico res-${r}`, html: RES_ICONS[r] });
 }
 
 // Icon + amount for each resource a cost uses. Amounts you can't afford from
-// `stock` are marked short.
-function costList(cost, stock) {
+// `stock` are marked short; `est` prefixes estimated amounts with "≈".
+function costList(cost, stock, est = false) {
   const items = RESOURCES.filter((r) => cost[r] > 0).map((r) => {
-    const short = stock && stock[r] < cost[r];
-    return el("span", { class: `ci${short ? " short" : ""}`, title: `${fmt.format(cost[r])} ${RES_LABEL[r].toLowerCase()}${short ? " (not enough)" : ""}` },
-      resIcon(r), compact(cost[r]), el("span", { class: "sr" }, ` ${RES_LABEL[r].toLowerCase()}${short ? ", not enough" : ""}`));
+    const short = stock && (stock[r] || 0) < cost[r];
+    const what = `${est ? "about " : ""}${fmt.format(cost[r])} ${RES_LABEL[r].toLowerCase()}`;
+    return el("span", { class: `ci${short ? " short" : ""}`, title: `${what}${est ? " (estimate)" : ""}${short ? " (not enough)" : ""}` },
+      resIcon(r), est ? EST : "", compact(cost[r]), el("span", { class: "sr" }, ` ${RES_LABEL[r].toLowerCase()}${est ? ", estimated" : ""}${short ? ", not enough" : ""}`));
   });
   return el("span", { class: "cost-list" }, items.length ? items : "Free");
 }
@@ -106,15 +124,18 @@ function emptyCost() {
 }
 
 // Total cost and base time of levels from..to (inclusive) of one node.
+// `est` is true when any of those levels' costs is an estimate.
 function levelRange(node, from, to) {
   const cost = emptyCost();
   let time = 0;
+  let est = false;
   for (let L = from; L <= to; L++) {
     const c = node.cost(L);
     for (const r of RESOURCES) cost[r] += c[r];
     time += node.time(L);
+    est ||= isEstCost(node, L);
   }
-  return { cost, time };
+  return { cost, time, est };
 }
 
 function nodesOf(treeId) {
@@ -189,7 +210,7 @@ const FIELD_GROUPS = [
       label: r === "badges" ? "Research Badges" : RES_LABEL[r],
       min: 0,
       max: 1e10,
-      step: r === "badges" ? 1 : 10000,
+      step: r === "badges" ? 100 : 100000,
     })),
   },
   {
@@ -199,7 +220,7 @@ const FIELD_GROUPS = [
       label: r === "badges" ? "Research Badges" : RES_LABEL[r],
       min: 0,
       max: 1e11,
-      step: r === "badges" ? 1 : 10000,
+      step: r === "badges" ? 100 : 100000,
     })),
   },
 ];
@@ -347,7 +368,7 @@ function run() {
   writeStorage(STORAGE_KEY, config);
   result = simulate(catalog, config);
   let p = 0;
-  cumulativePower = result.events.map((e) => (p += catalog.byId.get(e.nodeId).power));
+  cumulativePower = result.events.map((e) => (p += catalog.byId.get(e.nodeId).powerGain(e.level)));
   selectedDay = wasAtEnd ? config.days : Math.min(selectedDay, config.days);
   const slider = $("#day");
   slider.max = config.days;
@@ -543,6 +564,7 @@ function wireChart() {
 
 function renderTreeTable() {
   const lab = labLevelAt(config, config.days * DAY);
+  const progress = progressMap(catalog, result.levels);
   const busyTrees = new Set(result.inProgress.map((q) => catalog.byId.get(q.nodeId).treeId));
   const rows = config.priority.map((id) => treeById.get(id)).map((tree) => {
     const nodes = nodesOf(tree.id);
@@ -551,16 +573,16 @@ function renderTreeTable() {
     let status;
     if (tree.id in result.treeDone) {
       status = chip("done", "check", `Done on day ${Math.ceil(result.treeDone[tree.id] / DAY)}`);
-    } else if (busyTrees.has(tree.id) || nodes.some((n) => !blocker(catalog, n, result.levels, lab))) {
+    } else if (busyTrees.has(tree.id) || nodes.some((n) => !blocker(catalog, n, result.levels, lab, progress))) {
       status = chip("active", "clock", "In progress");
     } else {
-      const reasons = nodes.map((n) => blocker(catalog, n, result.levels, lab)).filter((b) => b && b !== "maxed");
-      status = chip("locked", "lock", reasons[0] || "Locked");
+      const reasons = nodes.map((n) => blocker(catalog, n, result.levels, lab, progress)).filter((b) => b && b !== "maxed");
+      status = chip("locked", "lock", reasons[0] ? `Needs ${reasons[0]}` : "Locked");
     }
     const meter = el("div", { class: `meter${got === max ? " done" : ""}` }, el("i", { style: `width:${(got / max) * 100}%` }));
     return el("tr", {},
       el("td", { class: "tree-name" }, tree.name),
-      el("td", { class: "col-cost" }, chip(tree.currency, null, tree.currency === "badges" ? "Badges" : "Resources")),
+      el("td", { class: "col-cost" }, chip(tree.currency, null, tree.currency === "badges" ? "Badges" : "Electricity, Zents")),
       el("td", {}, el("div", { class: "progress-cell" }, meter, el("span", { class: "num" }, `${got}/${max}`))),
       el("td", {}, status));
   });
@@ -570,41 +592,64 @@ function renderTreeTable() {
 
 // ---------- shared tree map ----------
 
-// view: { levels, labLevel, complete, state(node) -> { cls, label, note } }
+// What gates a whole tree, for its card: "Laboratory Lv 16", "New Home at 50%".
+function treeGate(tree, view) {
+  const gates = tree.requires
+    .filter((r) => !meetsPct(view.progress.get(r.id), r.pct))
+    .map((r) => treeRequirementText(catalog, r));
+  if (tree.lab && view.labLevel < tree.lab) gates.push(`Laboratory Lv ${tree.lab}`);
+  return gates.join(", ");
+}
+
+function sourceLine(tree) {
+  return el("p", { class: "tree-src" }, `Data: ${tree.sources.join(", ")}`);
+}
+
+// view: { levels, labLevel, progress, complete, state(node) -> { cls, label, note } }
 function renderTreeMap(container, view, mode) {
   container.replaceChildren(
     ...config.priority.map((id) => treeById.get(id)).map((tree) => {
       const nodes = nodesOf(tree.id);
       const got = nodes.reduce((s, n) => s + (view.levels[n.id] || 0), 0);
       const max = nodes.reduce((s, n) => s + n.maxLevel, 0);
-      const rootBlock = blocker(catalog, nodes[0], view.levels, view.labLevel, view.complete);
-      const treeLock = !view.levels[nodes[0].id] && rootBlock && rootBlock !== "maxed" ? rootBlock : null;
+      const started = nodes.some((n) => view.levels[n.id] || view.busy.has(n.id));
+      const treeLock = started ? null : treeGate(tree, view) || null;
 
       // Resources still needed to finish the tree (levels already paid for excluded).
       const left = emptyCost();
+      let leftEst = false;
       for (const n of nodes) {
         const from = (view.levels[n.id] || 0) + 1 + (view.busy.has(n.id) ? 1 : 0);
-        const c = levelRange(n, from, n.maxLevel).cost;
-        for (const r of RESOURCES) left[r] += c[r];
+        const r = levelRange(n, from, n.maxLevel);
+        for (const k of RESOURCES) left[k] += r.cost[k];
+        leftEst ||= r.est;
       }
       const done = view.complete.get(tree.id);
+      const notes = [...tree.conditions.map((c) => `Also needs ${c}.`), ...tree.notes];
 
       const card = el("div", { class: `tree${done ? " is-done" : ""}` },
         el("div", { class: "tree-head" },
           el("h3", {}, tree.name),
           el("span", { class: "num" }, `${got}/${max}`)),
         el("p", { class: "tree-desc" }, tree.description),
-        done ? null : el("p", { class: "tree-left" }, el("span", { class: "eyebrow" }, "Left to finish"), costList(left)),
+        sourceLine(tree),
+        notes.length
+          ? el("details", { class: "tree-notes" }, el("summary", {}, notes.length === 1 ? "1 note on this data" : `${notes.length} notes on this data`),
+            el("ul", {}, ...notes.map((n) => el("li", {}, n))))
+          : null,
+        done ? null : el("p", { class: "tree-left" }, el("span", { class: "eyebrow" }, "Left to finish"), costList(left, null, leftEst)),
         treeLock ? el("p", { class: "tree-lock" }, icon("lock"), `Needs ${treeLock}`) : null);
 
-      tree.tiers.forEach((_, t) => {
+      const rows = Math.max(...nodes.map((n) => n.tier)) + 1;
+      for (let t = 0; t < rows; t++) {
         const row = el("div", { class: "tier" });
         for (const node of nodes.filter((n) => n.tier === t)) {
           const lvl = view.levels[node.id] || 0;
           const st = view.state(node);
           // Next level's cost, unless maxed or already paid (researching now).
           const next = lvl < node.maxLevel && !view.busy.has(node.id) ? node.cost(lvl + 1) : null;
-          const costLabel = next ? ` Level ${lvl + 1} costs ${costText(next)}.` : "";
+          const nextEst = next ? isEstCost(node, lvl + 1) : false;
+          const costLabel = next ? ` Level ${lvl + 1} costs ${nextEst ? "about " : ""}${costText(next)}.` : "";
           // One-tap upgrade, offered only when this research can go up right now.
           const act = view.action?.(node, st);
           row.append(el("div", { class: `node ${st.cls}${act ? " has-up" : ""}` },
@@ -619,36 +664,48 @@ function renderTreeMap(container, view, mode) {
                 el("span", {}, `${lvl}/${node.maxLevel}`),
                 st.badge ? el("span", { class: "n-badge" }, st.badge) : null),
               el("span", { class: "meter" }, el("i", { style: `width:${(lvl / node.maxLevel) * 100}%` })),
-              next ? el("span", { class: "n-cost" }, costList(next, mode === "play" ? view.stock : null)) : null,
+              next ? el("span", { class: "n-cost" }, costList(next, mode === "play" ? view.stock : null, nextEst)) : null,
               st.note && !treeLock ? el("span", { class: "n-why" }, st.note) : null),
             act ? el("button", { type: "button", class: "node-up", "aria-label": act.label, title: act.label, onclick: act.run }, "+") : null));
         }
         card.append(row);
-      });
+      }
       return card;
-    })
+    }),
+    unpublishedCard()
   );
 }
 
+// Trees the sources name without listing their research.
+function unpublishedCard() {
+  return el("div", { class: "tree tree-missing" },
+    el("div", { class: "tree-head" }, el("h3", {}, "Not listed")),
+    el("p", { class: "tree-desc" }, "These trees are in the game, but none of the four sources lists their research, so they aren't simulated."),
+    el("ul", { class: "missing-list" }, ...UNPUBLISHED.map((u) => el("li", {}, el("b", {}, u.name), ` ${u.note}`))));
+}
+
 // ---------- auto plan: day view ----------
+
+const completeFrom = (progress) => new Map([...progress].map(([id, p]) => [id, p >= 1]));
 
 function autoView(day) {
   const minute = day * DAY;
   const levels = levelsAt(result.events, minute);
   const labLevel = labLevelAt(config, minute);
-  const complete = new Map(TREES.map((t) => [t.id, isTreeComplete(catalog, t.id, levels)]));
+  const progress = progressMap(catalog, levels);
+  const complete = completeFrom(progress);
   const busy = new Map(result.events.filter((e) => e.start <= minute && e.minute > minute).map((e) => [e.nodeId, e]));
   // Research still running when the run ends.
   if (day === config.days) for (const q of result.inProgress) busy.set(q.nodeId, q);
-  const speed = config.baseResearchSpeed + (statTotals(catalog, levels).researchSpeed || 0);
+  const speed = config.baseResearchSpeed + researchBonus(catalog, levels);
   const stock = result.daily[day].stock;
   return {
-    minute, levels, labLevel, complete, busy, speed, stock,
+    minute, levels, labLevel, progress, complete, busy, speed, stock,
     state(node) {
       const lvl = levels[node.id] || 0;
       if (lvl >= node.maxLevel) return { cls: "maxed", label: "Maxed" };
       if (busy.has(node.id)) return { cls: "busy", label: `Researching level ${lvl + 1}`, badge: `→${lvl + 1}` };
-      const why = blocker(catalog, node, levels, labLevel, complete);
+      const why = blocker(catalog, node, levels, labLevel, progress);
       if (why) return { cls: "locked", label: `Locked: needs ${why}`, note: why };
       return { cls: "open", label: "Unlocked" };
     },
@@ -673,7 +730,7 @@ function renderDay() {
 
   $("#stock").replaceChildren(
     el("span", {}, "Laboratory ", el("b", {}, `Lv ${view.labLevel}`)),
-    ...["food", "wood", "steel"].map((r) => el("span", { class: "res-label" }, resIcon(r), `${RES_LABEL[r]} `, el("b", {}, compact(snap.stock[r])))),
+    ...["electricity", "zents"].map((r) => el("span", { class: "res-label" }, resIcon(r), `${RES_LABEL[r]} `, el("b", {}, compact(snap.stock[r])))),
     el("span", { class: "res-label" }, resIcon("badges"), "Badges ", el("b", {}, fmt.format(Math.floor(snap.stock.badges)))),
     el("span", {}, "Research speed ", el("b", {}, `+${view.speed.toFixed(1)}%`))
   );
@@ -748,17 +805,19 @@ function savePlay() {
 
 function playView() {
   const lab = playLab;
-  const complete = lab.completeTrees();
+  const progress = lab.treeProgress();
+  const complete = completeFrom(progress);
   const speed = lab.researchSpeed();
   return {
     levels: lab.levels,
     labLevel: lab.labLevel,
+    progress,
     complete,
     speed,
     stock: lab.stock,
     busy: new Map(lab.queues.map((q) => [q.nodeId, q])),
     state(node) {
-      const s = lab.status(node, { complete, speed });
+      const s = lab.status(node, { progress, speed });
       const lvl = lab.levels[node.id] || 0;
       switch (s.state) {
         case "maxed": return { cls: "maxed", label: "Maxed" };
@@ -840,11 +899,15 @@ function renderPlay() {
 }
 
 function renderBonuses(levels) {
-  const totals = statTotals(catalog, levels);
-  const ids = Object.keys(STATS).filter((id) => totals[id]);
+  const { totals, unlocked } = bonusTotals(catalog, levels);
+  totals.sort((a, b) => (b.label === RESEARCH_SPEED) - (a.label === RESEARCH_SPEED) || a.label.localeCompare(b.label));
   $("#p-bonuses").replaceChildren(
-    ...(ids.length
-      ? ids.map((id) => el("span", { class: "bonus", title: STATS[id].desc }, `${STATS[id].label} `, el("b", {}, effectText(id, totals[id]))))
+    ...(totals.length || unlocked.length
+      ? [
+        ...totals.map((t) => el("span", { class: "bonus", title: t.label === RESEARCH_SPEED ? "Shortens every research timer" : "Shown for reference: only research speed changes the simulation" },
+          `${t.label} `, el("b", {}, bonusValue(t.value, t.unit)))),
+        ...unlocked.map((u) => el("span", { class: "bonus unlock" }, "Unlocked ", el("b", {}, u))),
+      ]
       : [el("p", { class: "hint" }, "No bonuses yet. Upgrade a research to get your first one.")])
   );
 }
@@ -965,11 +1028,13 @@ function savePlan() {
 }
 
 function planView() {
-  const complete = new Map(TREES.map((t) => [t.id, isTreeComplete(catalog, t.id, plan.levels)]));
-  const speed = config.baseResearchSpeed + (statTotals(catalog, plan.levels).researchSpeed || 0);
+  const progress = progressMap(catalog, plan.levels);
+  const complete = completeFrom(progress);
+  const speed = config.baseResearchSpeed + researchBonus(catalog, plan.levels);
   return {
     levels: plan.levels,
     labLevel: plan.labLevel,
+    progress,
     complete,
     speed,
     stock: null,
@@ -977,7 +1042,7 @@ function planView() {
     state(node) {
       const lvl = plan.levels[node.id] || 0;
       if (lvl >= node.maxLevel) return { cls: "maxed", label: "Maxed" };
-      const why = blocker(catalog, node, plan.levels, plan.labLevel, complete);
+      const why = blocker(catalog, node, plan.levels, plan.labLevel, progress);
       if (why) return { cls: "locked", label: `Locked: needs ${why}`, note: why };
       return { cls: "ready", label: `Can upgrade to level ${lvl + 1}` };
     },
@@ -997,11 +1062,12 @@ function planDownBlocker(node) {
       return `${catalog.byId.get(u.id).name} needs it at Lv ${u.level}`;
     }
   }
-  if (lvl === node.maxLevel) {
-    for (const tree of TREES) {
-      if (tree.requires.includes(node.treeId) && nodesOf(tree.id).some((n) => plan.levels[n.id])) {
-        return `${tree.name} needs ${treeById.get(node.treeId).name} finished`;
-      }
+  // Trees that need this tree at some percentage, and already have research.
+  const after = treeProgress(catalog, node.treeId, { ...plan.levels, [node.id]: lvl - 1 });
+  for (const tree of TREES) {
+    const req = tree.requires.find((r) => r.id === node.treeId);
+    if (req && !meetsPct(after, req.pct) && nodesOf(tree.id).some((n) => plan.levels[n.id])) {
+      return `${tree.name} needs ${treeRequirementText(catalog, req)}`;
     }
   }
   return null;
@@ -1065,7 +1131,7 @@ function renderPlanHud(view) {
     for (const k of RESOURCES) spent[k] += r.cost[k];
     baseTime += r.time;
     levels += lvl;
-    power += lvl * node.power;
+    power += node.powerAt(lvl);
   }
 
   $("#plan-lab").textContent = `Lv ${plan.labLevel}`;
@@ -1144,7 +1210,6 @@ function finishedAt(events, nodeId, level) {
 function renderDetail() {
   const node = catalog.byId.get(detail.nodeId);
   const tree = treeById.get(node.treeId);
-  const stat = STATS[node.stat];
   const isPlay = detail.mode === "play";
   const isPlan = detail.mode === "plan";
   const view = isPlan ? planView() : isPlay ? playView() : autoView(selectedDay);
@@ -1154,14 +1219,27 @@ function renderDetail() {
 
   // Requirements for the next level.
   const reqs = [];
-  for (const id of tree.requires) {
-    reqs.push({ ok: view.complete.get(id), text: `Finish ${treeById.get(id).name}` });
+  for (const r of tree.requires) {
+    const share = view.progress.get(r.id);
+    reqs.push({ ok: meetsPct(share, r.pct), text: treeRequirementText(catalog, r), now: `now ${Math.floor(share * 100)}%` });
   }
-  reqs.push({ ok: view.labLevel >= node.labRequired, text: `Laboratory Lv ${node.labRequired}`, now: `now Lv ${view.labLevel}` });
+  reqs.push({
+    ok: view.labLevel >= node.labRequired,
+    text: `Laboratory Lv ${node.labRequired}`,
+    now: `now Lv ${view.labLevel}`,
+    note: node.estLab ? "as in Shooter Training" : null,
+  });
   for (const p of node.prereqs) {
     const have = view.levels[p.id] || 0;
-    reqs.push({ ok: have >= p.level, text: `${catalog.byId.get(p.id).name} Lv ${p.level}`, now: `now Lv ${have}`, nodeId: p.id });
+    reqs.push({
+      ok: have >= p.level,
+      text: `${catalog.byId.get(p.id).name} Lv ${p.level}`,
+      now: `now Lv ${have}`,
+      nodeId: p.id,
+      note: node.estLinks ? "link estimated" : null,
+    });
   }
+  for (const c of tree.conditions) reqs.push({ ok: true, text: c, info: true });
 
   // Action area (play) or context line (auto).
   let action;
@@ -1213,13 +1291,14 @@ function renderDetail() {
     const paid = Boolean(busyQ);
     const showStock = !paid && Boolean(view.stock);
     const cost = node.cost(L);
+    const est = isEstCost(node, L);
     const haveLabel = isPlay ? "You have" : `Stock on day ${selectedDay}`;
     const resRows = RESOURCES.filter((r) => cost[r] > 0).map((r) => {
       const have = showStock ? Math.floor(view.stock[r]) : 0;
       const short = cost[r] - have;
       return el("tr", {},
         el("td", {}, el("span", { class: "res-label" }, resIcon(r), RES_LABEL[r])),
-        el("td", { class: "num" }, el("b", {}, fmt.format(cost[r]))),
+        el("td", { class: "num" }, estMark(est), el("b", {}, fmt.format(cost[r]))),
         showStock ? el("td", { class: "num" }, fmt.format(have)) : null,
         showStock ? el("td", {}, short > 0 ? chip("short", "cross", `Short ${compact(short)}`) : chip("done", "check", "Enough")) : null);
     });
@@ -1235,20 +1314,21 @@ function renderDetail() {
           el("tbody", {}, ...resRows,
             el("tr", { class: "timer-row" },
               el("td", {}, el("span", { class: "res-label" }, icon("clock"), "Research time")),
-              el("td", { class: "num" }, el("b", {}, formatDuration(researchDuration(node.time(L), view.speed)))),
+              el("td", { class: "num" }, estMark(true, "Estimate: no source publishes research timers"), el("b", {}, formatDuration(researchDuration(node.time(L), view.speed)))),
               el("td", { class: "num muted", colspan: showStock ? 2 : 1 }, `at +${view.speed.toFixed(1)}% speed, before helps`))))),
+      est ? el("p", { class: "hint" }, `${EST} The sources don't publish this level's cost. It's estimated from the published levels and how costs grow level by level in the game.`) : null,
       rest
         ? el("div", { class: "d-total" },
           el("span", { class: "eyebrow" }, restFrom === node.maxLevel
             ? `Level ${restFrom}`
             : `Levels ${restFrom}–${node.maxLevel} together`),
-          costList(rest.cost, isPlay ? view.stock : null),
+          costList(rest.cost, isPlay ? view.stock : null, rest.est),
           el("span", { class: "muted" }, ` · ${formatDuration(researchDuration(rest.time, view.speed))} of research`))
         : null,
       isPlan && lvl > 0
         ? el("div", { class: "d-total" },
           el("span", { class: "eyebrow" }, `Spent on levels 1–${lvl}`),
-          costList(levelRange(node, 1, lvl).cost))
+          costList(levelRange(node, 1, lvl).cost, null, levelRange(node, 1, lvl).est))
         : null);
   }
 
@@ -1266,67 +1346,90 @@ function renderDetail() {
     else if (L === lvl + 1) when = el("span", { class: "when next" }, "Next");
     else if (!isPlay && ev) when = el("span", { class: "when muted" }, clock(ev.minute));
     else when = el("span", { class: "when muted" }, "–");
+    const levelEst = isEstCost(node, L);
     rows.push(el("tr", { class: L <= lvl ? "is-done" : L === lvl + 1 ? "is-next" : "" },
       el("td", { class: "num" }, L),
       el("td", {},
-        el("b", { class: "num" }, effectText(node.stat, node.perLevel * L)),
+        node.effects.length
+          ? node.effects.map((e) => el("div", { class: "num" }, e.text !== undefined ? e.text : e.values ? el("b", {}, bonusValue(e.values[L - 1], e.unit)) : "–"))
+          : "–",
         unlocks.length ? el("div", { class: "d-unlock" }, `Required for ${unlocks.join(", ")}`) : null),
-      ...usedRes.map((r) => el("td", { class: "num d-res" }, compact(node.cost(L)[r]))),
+      ...usedRes.map((r) => el("td", { class: "num d-res" }, levelEst ? EST : "", compact(node.cost(L)[r]))),
+      el("td", { class: "num" }, compact(node.powerAt(L))),
       el("td", { class: "num" }, formatDuration(researchDuration(node.time(L), view.speed))),
       el("td", {}, when)));
   }
 
-  const leadsTo = node.unlocks.map((u) => `${catalog.byId.get(u.id).name} (needs Lv ${u.level})`);
+  const leadsTo = node.unlocks.map((u) => catalog.byId.get(u.id).name);
+  const opens = TREES.filter((t) => t.requires.some((r) => r.id === tree.id))
+    .map((t) => `${t.name} (at ${t.requires.find((r) => r.id === tree.id).pct}% of ${tree.name})`);
+  const bonusName = node.effects.length ? node.effects.map((e) => e.label === "Unlocks" ? `Unlocks ${e.text}` : e.label).join(" · ") : "No bonus listed";
+  const speedNode = node.effects.some((e) => e.label === RESEARCH_SPEED);
+  const dataNotes = [
+    `Data: ${node.source}.`,
+    node.estCost.size ? `${EST} Costs for level${node.estCost.size > 1 ? "s" : ""} ${[...node.estCost].join(", ")} are estimates.` : null,
+    node.estPower ? "Power is estimated from badge cost." : null,
+    node.estLinks ? "Links between research in this tree are estimated." : null,
+    node.effects.some((e) => !e.values && e.text === undefined) ? "The source doesn't publish this bonus's amounts." : null,
+    "Timers are estimates: no source publishes them.",
+  ].filter(Boolean);
 
   $("#detail-body").replaceChildren(
     el("div", { class: "d-head" },
       el("div", {},
-        el("div", { class: "eyebrow" }, `${tree.name} · Tier ${node.tier + 1} · ${tree.currency === "badges" ? "Badge research" : "Resource research"}`),
+        el("div", { class: "eyebrow" }, `${tree.name} · Row ${node.tier + 1} · ${tree.currency === "badges" ? "Badge research" : "Electricity and Zents"}`),
         el("h2", { id: "detail-title" }, node.name)),
       el("button", { type: "button", class: "icon-btn", "aria-label": "Close", onclick: () => $("#detail").close() }, icon("cross"))),
-    el("p", { class: "d-desc" }, node.description),
+    el("p", { class: "d-desc" }, bonusName),
     el("div", { class: "d-effect" },
       el("div", {},
-        el("span", { class: "eyebrow" }, "Each level"),
-        el("b", {}, `${stat.label} ${effectText(node.stat, node.perLevel)}`),
-        el("small", {}, stat.desc)),
-      el("div", {},
         el("span", { class: "eyebrow" }, `Now · Lv ${lvl} of ${node.maxLevel}`),
-        el("b", {}, lvl ? `${stat.label} ${effectText(node.stat, node.perLevel * lvl)}` : "No bonus yet"),
-        el("small", {}, lvl < node.maxLevel ? `Max: ${effectText(node.stat, node.perLevel * node.maxLevel)}` : "Fully researched"))),
-    node.stat !== "researchSpeed"
-      ? el("p", { class: "hint" }, "Shown for reference. Only research speed changes timers in this simulator.")
-      : el("p", { class: "hint" }, "This bonus shortens every research you start after each level finishes."),
+        el("b", {}, lvl ? effectsAt(node, lvl) : "No bonus yet"),
+        el("small", {}, `${compact(node.powerAt(lvl))} power`)),
+      el("div", {},
+        el("span", { class: "eyebrow" }, lvl < node.maxLevel ? `Next · Lv ${lvl + 1}` : "Max level"),
+        el("b", {}, effectsAt(node, Math.min(lvl + 1, node.maxLevel))),
+        el("small", {}, lvl < node.maxLevel
+          ? `Max: ${effectsAt(node, node.maxLevel)}`
+          : "Fully researched"))),
+    el("p", { class: "hint" }, speedNode
+      ? "This bonus shortens every research you start after each level finishes."
+      : "Shown for reference. Only research speed changes timers in this simulator."),
     action,
     costs,
     lvl < node.maxLevel
       ? el("div", { class: "d-reqs" },
         el("h3", {}, "Requirements"),
         el("ul", {}, ...reqs.map((r) =>
-          el("li", { class: r.ok ? "ok" : "no" },
-            icon(r.ok ? "check" : "cross"),
+          el("li", { class: r.info ? "info" : r.ok ? "ok" : "no" },
+            r.info ? icon("lock") : icon(r.ok ? "check" : "cross"),
             r.nodeId
               ? el("button", { type: "button", class: "linkish", onclick: () => openDetail(r.nodeId, detail.mode) }, r.text)
               : el("span", {}, r.text),
-            r.now && !r.ok ? el("span", { class: "muted" }, ` (${r.now})`) : null))))
+            r.now && !r.ok ? el("span", { class: "muted" }, ` (${r.now})`) : null,
+            r.note ? el("span", { class: "muted" }, ` · ${r.note}`) : null))))
       : null,
     el("div", { class: "d-levels" },
       el("h3", {}, "Levels"),
-      el("p", { class: "hint" }, `Bonus is the total at that level. Each level's resources are paid when it starts. Timers use your current research speed (+${view.speed.toFixed(1)}%) before helps and speedups.`),
+      el("p", { class: "hint" }, `Bonus and power are the totals at that level. Each level's resources are paid when it starts. ${EST} marks estimated costs. Timers are estimates at your current research speed (+${view.speed.toFixed(1)}%), before helps and speedups.`),
       el("div", { class: "table-scroll" },
         el("table", { class: "d-table" },
           el("thead", {}, el("tr", {},
             el("th", { class: "num" }, "Lv"), el("th", {}, "Bonus"),
             ...usedRes.map((r) => el("th", { class: "num d-res" }, el("span", { class: "res-label" }, resIcon(r), RES_LABEL[r]))),
+            el("th", { class: "num" }, "Power"),
             el("th", { class: "num" }, "Timer"),
             el("th", {}, isPlay ? "Finished" : isPlan ? "Status" : "Auto plan"))),
           el("tbody", {}, ...rows),
           el("tfoot", {}, el("tr", {},
             el("td", {}), el("td", {}, el("b", {}, "All levels")),
-            ...usedRes.map((r) => el("td", { class: "num d-res" }, el("b", {}, compact(all.cost[r])))),
+            ...usedRes.map((r) => el("td", { class: "num d-res" }, el("b", {}, all.est ? EST : "", compact(all.cost[r])))),
+            el("td", { class: "num" }, el("b", {}, compact(node.powerAt(node.maxLevel)))),
             el("td", { class: "num" }, el("b", {}, formatDuration(researchDuration(all.time, view.speed)))),
             el("td", {})))))),
-    leadsTo.length ? el("p", { class: "d-leads" }, el("b", {}, "Leads to: "), leadsTo.join(", ")) : null
+    leadsTo.length ? el("p", { class: "d-leads" }, el("b", {}, "Leads to: "), leadsTo.join(", ")) : null,
+    opens.length ? el("p", { class: "d-leads" }, el("b", {}, "This tree opens: "), opens.join(", ")) : null,
+    el("p", { class: "d-src" }, dataNotes.join(" "))
   );
 }
 
