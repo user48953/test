@@ -19,9 +19,15 @@ to spend speedups. Nodes are marked Ready, Researching, Short on resources,
 Locked or Maxed, and your power is compared with the auto plan at the same day.
 Your game is saved in the browser, so it survives a reload.
 
+**Resources needed**: every research card shows the food, wood, steel and Research
+Badges its next level costs, and each tree shows what's left to finish it. In Play
+mode, amounts you can't afford yet are underlined.
+
 **Research details**: tap any research in either mode to see its description,
-what each level adds, the requirements for the next level, and a table of every
-level with its total bonus, cost, timer, what it unlocks, and when it finished.
+what each level adds, the requirements for the next level, the resources for the
+next level next to what you have (and how much you're short), the total for all
+remaining levels, and a table of every level with its total bonus, cost per
+resource, timer, what it unlocks, and when it finished.
 
 No build step and no dependencies.
 
