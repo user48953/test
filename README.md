@@ -1,9 +1,21 @@
 # Last Z Research Simulator
 
 A browser app that simulates how a Last Z: Survival Shooter account works through
-the Laboratory research trees. You set your Laboratory level, research queues,
-daily income, speedups and alliance helps, then either let the auto plan run or
-play it yourself.
+the Laboratory research trees. Start from zero and choose every upgrade yourself,
+or let the auto plan choose for you.
+
+**Start from zero** (the first tab) has two rule sets:
+
+- **Free planning** (default): everything starts at level 0. Tap **+** on any
+  research to upgrade it instantly, raise or lower your Laboratory level, and
+  remove levels from a research's detail view. Prerequisites and Laboratory
+  requirements still apply, so a removal that would break something you built
+  is blocked with the reason. The page keeps a running total of resources
+  spent, research time, power and every bonus you've earned.
+- **Real time**: a timed game. Tap **+** to start research, pay its resources,
+  then skip time ahead and spend speedups (details below).
+
+Your plan and your game are saved in the browser, so they survive a reload.
 
 **Auto plan** runs the whole schedule at once and shows:
 
@@ -13,15 +25,14 @@ play it yourself.
 - a log of every research level finished, with its timer
 - how much queue time is wasted waiting for resources or for unlocks
 
-**Play it yourself** gives you a Laboratory on day 1. You pick each research,
-skip time ahead (1 hour, 8 hours, 1 day, or to the next finish), and decide when
-to spend speedups. Nodes are marked Ready, Researching, Short on resources,
-Locked or Maxed, and your power is compared with the auto plan at the same day.
-Your game is saved in the browser, so it survives a reload.
+**Real time** gives you a Laboratory on day 1. You pick each research, skip time
+ahead (1 hour, 8 hours, 1 day, or to the next finish), and decide when to spend
+speedups. Nodes are marked Ready, Researching, Short on resources, Locked or
+Maxed, and your power is compared with the auto plan at the same day.
 
 **Resources needed**: every research card shows the food, wood, steel and Research
-Badges its next level costs, and each tree shows what's left to finish it. In Play
-mode, amounts you can't afford yet are underlined.
+Badges its next level costs, and each tree shows what's left to finish it. In Real
+time, amounts you can't afford yet are underlined.
 
 **Research details**: tap any research in either mode to see its description,
 what each level adds, the requirements for the next level, the resources for the
@@ -81,5 +92,5 @@ to reshape the trees.
 | `index.html` | Page layout and styles |
 | `src/data.js` | Research trees, scaling, default settings |
 | `src/sim.js` | Engine: the `Lab` game state and the `simulate()` auto plan (no DOM) |
-| `src/app.js` | UI: settings, both modes, chart, tree map, research details |
+| `src/app.js` | UI: settings, free planning, real-time play, auto plan, chart, tree map, research details |
 | `tests/sim.test.js` | Simulator tests (`node --test`) |

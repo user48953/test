@@ -319,21 +319,51 @@ td.num, th.num { text-align: right; }
 .tier { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; }
 .tier + .tier { margin-top: 6px; }
 .node {
-  display: block;
-  width: 100%;
-  text-align: left;
+  position: relative;
   border: 1px solid var(--line);
   border-radius: 3px;
-  padding: 6px 7px 7px;
   font-size: 0.75rem;
   line-height: 1.25;
   background: var(--surface);
   min-width: 0;
-  cursor: pointer;
-  transition: border-color 0.12s, transform 0.12s;
+  transition: border-color 0.12s;
 }
 .node:hover { border-color: var(--ink); }
-.node:active { transform: translateY(1px); }
+.node-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  width: 100%;
+  height: 100%;
+  text-align: left;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  padding: 6px 7px 7px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.node-main:active { transform: translateY(1px); }
+.node.has-up .node-main { padding-right: 36px; }
+.node-up {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 3px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font: 700 18px/1 var(--font-data);
+  cursor: pointer;
+  transition: transform 0.1s, filter 0.1s;
+}
+.node-up:hover { filter: brightness(1.1); }
+.node-up:active { transform: scale(0.92); }
 .node .n-name { display: block; font-weight: 600; overflow-wrap: anywhere; }
 .node .n-lvl { font-family: var(--font-data); color: var(--muted); display: flex; justify-content: space-between; gap: 4px; margin: 2px 0 4px; }
 .node .n-badge { font-weight: 600; color: var(--accent); }
@@ -357,6 +387,25 @@ td.num, th.num { text-align: right; }
 .sw.short { border-color: var(--warn); }
 .sw.locked { border-style: dashed; background: transparent; }
 .sw.maxed { border-color: var(--good); background: var(--good-soft); }
+
+/* Rules switch, plan HUD, bonuses */
+.rules { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); background: var(--sunken); padding: 3px; gap: 3px; }
+.seg button { border: 0; background: transparent; border-radius: 3px; padding: 6px 14px; font-weight: 600; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface); box-shadow: inset 0 -2px 0 var(--accent); }
+.seg button:hover:not([aria-pressed="true"]) { color: var(--accent); }
+.rules-desc { margin: 0; color: var(--muted); font-size: var(--step--1); flex: 1 1 260px; }
+.stepper { display: inline-flex; align-items: center; gap: 10px; margin-top: 2px; }
+.stepper b { font-size: var(--step-2); min-width: 4.5ch; text-align: center; }
+.stepper button { width: 32px; height: 32px; border: 1px solid var(--ink); border-radius: var(--radius); background: transparent; font: 700 18px/1 var(--font-data); cursor: pointer; }
+.stepper button:hover:not(:disabled) { background: var(--ink); color: var(--bg); }
+.stepper button:disabled { opacity: 0.35; cursor: not-allowed; }
+.hud-sub { margin-bottom: 6px; }
+.plus-key { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 3px; background: var(--accent); color: var(--accent-ink); font-family: var(--font-data); }
+.time-controls .hint { flex: 1 1 260px; }
+.bonuses { display: flex; flex-wrap: wrap; gap: 6px; }
+.bonus { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 3px 10px; font-size: var(--step--1); }
+.bonus b { font-family: var(--font-data); color: var(--good); }
 
 /* Log */
 .log td:first-child { white-space: nowrap; }
@@ -415,6 +464,8 @@ dialog::backdrop { background: rgba(10, 12, 8, 0.55); }
 .d-state.locked { color: var(--muted); border: 1px dashed var(--line); }
 .d-state.muted { font-weight: 400; border: 1px solid var(--line); }
 .d-action-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.d-action-row .btn.big { width: auto; flex: 1 1 220px; }
+.d-action-row .d-state { flex: 1 1 220px; }
 .d-reqs h3, .d-levels h3 { font-family: var(--font-display); font-size: var(--step-1); text-transform: uppercase; letter-spacing: 0.03em; margin-bottom: 6px; }
 .d-reqs ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: var(--step--1); }
 .d-reqs li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -491,11 +542,11 @@ footer p { max-width: 75ch; margin: 0; }
 <main class="wrap layout">
   <section class="report" aria-label="Research simulator">
     <div class="tabs" role="tablist" aria-label="Mode">
-      <button type="button" role="tab" id="tab-auto" aria-controls="view-auto" aria-selected="true">
-        <b>Auto plan</b><small>See the whole run at once</small>
+      <button type="button" role="tab" id="tab-play" aria-controls="view-play" aria-selected="true">
+        <b>Start from zero</b><small>Choose every upgrade yourself</small>
       </button>
-      <button type="button" role="tab" id="tab-play" aria-controls="view-play" aria-selected="false" tabindex="-1">
-        <b>Play it yourself</b><small>Pick each research, skip time</small>
+      <button type="button" role="tab" id="tab-auto" aria-controls="view-auto" aria-selected="false" tabindex="-1">
+        <b>Auto plan</b><small>Let the simulator choose for you</small>
       </button>
     </div>
 
@@ -557,7 +608,39 @@ footer p { max-width: 75ch; margin: 0; }
     </div>
 
     <div class="view" id="view-play" role="tabpanel" aria-labelledby="tab-play" hidden>
-      <section class="panel hud" aria-label="Your Laboratory">
+      <div class="rules">
+        <span class="eyebrow">Rules</span>
+        <div class="seg" role="group" aria-label="Rules">
+          <button type="button" id="rules-plan" aria-pressed="true">Free planning</button>
+          <button type="button" id="rules-real" aria-pressed="false">Real time</button>
+        </div>
+        <p class="rules-desc" id="rules-desc"></p>
+      </div>
+
+      <section class="panel hud" id="hud-plan" aria-label="Your plan">
+        <div class="hud-top">
+          <div>
+            <div class="eyebrow">Laboratory</div>
+            <div class="stepper">
+              <button type="button" id="plan-lab-down" aria-label="Lower Laboratory level">−</button>
+              <b class="num" id="plan-lab">Lv 1</b>
+              <button type="button" id="plan-lab-up" aria-label="Raise Laboratory level">+</button>
+            </div>
+          </div>
+          <div class="hud-stats" id="plan-stats"></div>
+        </div>
+        <div>
+          <div class="eyebrow hud-sub">Resources spent on your upgrades</div>
+          <div class="res-row" id="plan-spent"></div>
+        </div>
+        <div class="time-controls">
+          <span class="hint">Tap <b class="plus-key">+</b> on a research to upgrade it. Tap the card for details or to remove a level.</span>
+          <button type="button" class="btn ghost" id="plan-reset">Reset to zero</button>
+        </div>
+        <p class="message" id="plan-message" role="status" aria-live="polite"></p>
+      </section>
+
+      <section class="panel hud" id="hud-real" aria-label="Your Laboratory" hidden>
         <div class="hud-top">
           <div>
             <div class="eyebrow">Time</div>
@@ -583,20 +666,22 @@ footer p { max-width: 75ch; margin: 0; }
 
       <section class="panel">
         <div class="panel-head">
-          <h2>Research trees</h2>
-          <p>Tap a research for details and to start it</p>
+          <h2>Your bonuses</h2>
+          <p>Totals from every level you have researched</p>
         </div>
-        <div class="legend">
-          <span><i class="sw ready"></i>Ready to start</span>
-          <span><i class="sw busy"></i>Researching</span>
-          <span><i class="sw short"></i>Short on resources</span>
-          <span><i class="sw locked"></i>Locked</span>
-          <span><i class="sw maxed"></i>Maxed</span>
-        </div>
-        <div class="trees" id="p-map"></div>
+        <div class="bonuses" id="p-bonuses"></div>
       </section>
 
       <section class="panel">
+        <div class="panel-head">
+          <h2>Research trees</h2>
+          <p id="p-map-sub"></p>
+        </div>
+        <div class="legend" id="p-legend"></div>
+        <div class="trees" id="p-map"></div>
+      </section>
+
+      <section class="panel" id="p-log-panel">
         <div class="panel-head">
           <h2>Your research log</h2>
           <p id="p-log-sub"></p>

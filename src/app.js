@@ -6,7 +6,9 @@ import {
 
 const STORAGE_KEY = "lastz-research-sim:v1";
 const PLAY_KEY = "lastz-research-sim:play:v1";
-const TAB_KEY = "lastz-research-sim:tab";
+const TAB_KEY = "lastz-research-sim:tab:v2";
+const PLAN_KEY = "lastz-research-sim:plan:v1";
+const RULES_KEY = "lastz-research-sim:rules";
 const catalog = buildCatalog(TREES);
 const treeById = new Map(TREES.map((t) => [t.id, t]));
 const totalLevels = catalog.nodes.reduce((sum, n) => sum + n.maxLevel, 0);
@@ -276,9 +278,9 @@ function buildSettings() {
 function renderSettingsNote() {
   const note = $("#settings-note");
   if (!note) return;
-  note.textContent = activeTab === "play"
-    ? "Income, boosts, helps and queues apply to your game right away. Starting stock and Laboratory level apply when you restart."
-    : "Changes rerun the auto plan instantly.";
+  if (activeTab === "auto") note.textContent = "Changes rerun the auto plan instantly.";
+  else if (rules === "plan") note.textContent = "Free planning has no timers or income, so only the research speed bonus applies (to the timers it shows). Switch to Real time to use the rest.";
+  else note.textContent = "Income, boosts, helps and queues apply to your game right away. Starting stock and Laboratory level apply when you restart.";
 }
 
 function renderPriority() {
@@ -303,11 +305,11 @@ function renderPriority() {
 
 // ---------- tabs ----------
 
-let activeTab = "auto";
+let activeTab = "play";
 
 function setTab(tab, { focus = false } = {}) {
   activeTab = tab;
-  for (const name of ["auto", "play"]) {
+  for (const name of ["play", "auto"]) {
     const btn = $(`#tab-${name}`);
     btn.setAttribute("aria-selected", String(name === tab));
     btn.tabIndex = name === tab ? 0 : -1;
@@ -321,7 +323,7 @@ function setTab(tab, { focus = false } = {}) {
 }
 
 function wireTabs() {
-  for (const name of ["auto", "play"]) $(`#tab-${name}`).addEventListener("click", () => setTab(name));
+  for (const name of ["play", "auto"]) $(`#tab-${name}`).addEventListener("click", () => setTab(name));
   $(".tabs").addEventListener("keydown", (e) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     setTab(activeTab === "auto" ? "play" : "auto", { focus: true });
@@ -603,19 +605,23 @@ function renderTreeMap(container, view, mode) {
           // Next level's cost, unless maxed or already paid (researching now).
           const next = lvl < node.maxLevel && !view.busy.has(node.id) ? node.cost(lvl + 1) : null;
           const costLabel = next ? ` Level ${lvl + 1} costs ${costText(next)}.` : "";
-          row.append(el("button", {
-            type: "button",
-            class: `node ${st.cls}`,
-            "aria-label": `${node.name}, level ${lvl} of ${node.maxLevel}. ${st.label}.${costLabel} Open details.`,
-            onclick: () => openDetail(node.id, mode),
-          },
-            el("span", { class: "n-name" }, node.name),
-            el("span", { class: "n-lvl" },
-              el("span", {}, `${lvl}/${node.maxLevel}`),
-              st.badge ? el("span", { class: "n-badge" }, st.badge) : null),
-            el("span", { class: "meter" }, el("i", { style: `width:${(lvl / node.maxLevel) * 100}%` })),
-            next ? el("span", { class: "n-cost" }, costList(next, mode === "play" ? view.stock : null)) : null,
-            st.note && !treeLock ? el("span", { class: "n-why" }, st.note) : null));
+          // One-tap upgrade, offered only when this research can go up right now.
+          const act = view.action?.(node, st);
+          row.append(el("div", { class: `node ${st.cls}${act ? " has-up" : ""}` },
+            el("button", {
+              type: "button",
+              class: "node-main",
+              "aria-label": `${node.name}, level ${lvl} of ${node.maxLevel}. ${st.label}.${costLabel} Open details.`,
+              onclick: () => openDetail(node.id, mode),
+            },
+              el("span", { class: "n-name" }, node.name),
+              el("span", { class: "n-lvl" },
+                el("span", {}, `${lvl}/${node.maxLevel}`),
+                st.badge ? el("span", { class: "n-badge" }, st.badge) : null),
+              el("span", { class: "meter" }, el("i", { style: `width:${(lvl / node.maxLevel) * 100}%` })),
+              next ? el("span", { class: "n-cost" }, costList(next, mode === "play" ? view.stock : null)) : null,
+              st.note && !treeLock ? el("span", { class: "n-why" }, st.note) : null),
+            act ? el("button", { type: "button", class: "node-up", "aria-label": act.label, title: act.label, onclick: act.run }, "+") : null));
         }
         card.append(row);
       });
@@ -766,8 +772,13 @@ function playView() {
           return { cls: "short", label: `Not enough resources: needs ${need.join(" and ")}` };
         }
         case "queueFull": return { cls: "open", label: "Unlocked, all queues busy" };
-        default: return { cls: "ready", label: `Ready: level ${lvl + 1} in ${formatDuration(s.duration)}`, badge: "Ready" };
+        default: return { cls: "ready", label: `Ready: level ${lvl + 1} in ${formatDuration(s.duration)}` };
       }
+    },
+    action(node, st) {
+      if (st.cls !== "ready") return null;
+      const lvl = lab.levels[node.id] || 0;
+      return { label: `Start ${node.name} level ${lvl + 1}`, run: () => startResearch(node.id) };
     },
   };
 }
@@ -805,8 +816,41 @@ function slotCount() {
 
 function renderPlay() {
   if (!playLab || activeTab !== "play") return;
+  for (const name of ["plan", "real"]) $(`#rules-${name}`).setAttribute("aria-pressed", String(rules === name));
+  $("#rules-desc").textContent = rules === "plan"
+    ? "Start at zero and upgrade anything instantly. Prerequisites and Laboratory level still apply. No timers or resource limits."
+    : "A timed game: pay resources, wait for research to finish, skip time ahead and spend speedups.";
+  $("#hud-plan").hidden = rules !== "plan";
+  $("#hud-real").hidden = rules !== "real";
+  $("#p-log-panel").hidden = rules !== "real";
+
+  const view = rules === "plan" ? planView() : playView();
+  if (rules === "plan") renderPlanHud(view);
+  else renderRealHud(view);
+
+  renderBonuses(view.levels);
+  const legend = rules === "plan"
+    ? [["ready", "Can upgrade now"], ["locked", "Locked"], ["maxed", "Maxed"]]
+    : [["ready", "Ready to start"], ["busy", "Researching"], ["short", "Short on resources"], ["locked", "Locked"], ["maxed", "Maxed"]];
+  $("#p-legend").replaceChildren(...legend.map(([cls, text]) => el("span", {}, el("i", { class: `sw ${cls}` }), text)));
+  $("#p-map-sub").textContent = rules === "plan"
+    ? "Tap + to upgrade · tap a card for details"
+    : "Tap + to start research · tap a card for details";
+  renderTreeMap($("#p-map"), view, rules === "plan" ? "plan" : "play");
+}
+
+function renderBonuses(levels) {
+  const totals = statTotals(catalog, levels);
+  const ids = Object.keys(STATS).filter((id) => totals[id]);
+  $("#p-bonuses").replaceChildren(
+    ...(ids.length
+      ? ids.map((id) => el("span", { class: "bonus", title: STATS[id].desc }, `${STATS[id].label} `, el("b", {}, effectText(id, totals[id]))))
+      : [el("p", { class: "hint" }, "No bonuses yet. Upgrade a research to get your first one.")])
+  );
+}
+
+function renderRealHud(view) {
   const lab = playLab;
-  const view = playView();
 
   $("#p-clock").textContent = clock(lab.t);
   const nextLab = lab.labLevel < config.labMaxLevel
@@ -864,7 +908,6 @@ function renderPlay() {
   $("#p-next").disabled = !lab.queues.length;
   $("#p-message").textContent = lastMessage;
 
-  renderTreeMap($("#p-map"), view, "play");
   renderLog($("#p-log tbody"), lab.events.slice(-25).reverse(), "Nothing researched yet. Start a research marked Ready, then skip time ahead.");
   $("#p-log-sub").textContent = `${fmt.format(lab.events.length)} of ${fmt.format(totalLevels)} levels researched`;
 }
@@ -898,6 +941,187 @@ function wirePlay() {
   });
 }
 
+// ---------- free planning ----------
+// Start at zero and upgrade anything instantly: no timers, income or queues.
+// Prerequisites and Laboratory levels still apply.
+
+let rules = readStorage(RULES_KEY) === "real" ? "real" : "plan";
+let plan = null;
+let planMessage = "";
+
+function loadPlan() {
+  const saved = readStorage(PLAN_KEY);
+  const levels = {};
+  for (const [id, lvl] of Object.entries(saved?.levels || {})) {
+    const node = catalog.byId.get(id);
+    if (node && Number.isInteger(lvl) && lvl > 0) levels[id] = Math.min(lvl, node.maxLevel);
+  }
+  const labLevel = Math.min(config.labMaxLevel, Math.max(1, Math.floor(Number(saved?.labLevel)) || 1));
+  return { levels, labLevel };
+}
+
+function savePlan() {
+  writeStorage(PLAN_KEY, plan);
+}
+
+function planView() {
+  const complete = new Map(TREES.map((t) => [t.id, isTreeComplete(catalog, t.id, plan.levels)]));
+  const speed = config.baseResearchSpeed + (statTotals(catalog, plan.levels).researchSpeed || 0);
+  return {
+    levels: plan.levels,
+    labLevel: plan.labLevel,
+    complete,
+    speed,
+    stock: null,
+    busy: new Map(),
+    state(node) {
+      const lvl = plan.levels[node.id] || 0;
+      if (lvl >= node.maxLevel) return { cls: "maxed", label: "Maxed" };
+      const why = blocker(catalog, node, plan.levels, plan.labLevel, complete);
+      if (why) return { cls: "locked", label: `Locked: needs ${why}`, note: why };
+      return { cls: "ready", label: `Can upgrade to level ${lvl + 1}` };
+    },
+    action(node, st) {
+      if (st.cls !== "ready") return null;
+      return { label: `Upgrade ${node.name} to level ${(plan.levels[node.id] || 0) + 1}`, run: () => planUp(node.id) };
+    },
+  };
+}
+
+// Why a level can't be removed: research built on it would lose a requirement.
+function planDownBlocker(node) {
+  const lvl = plan.levels[node.id] || 0;
+  if (!lvl) return "It is already at level 0";
+  for (const u of node.unlocks) {
+    if ((plan.levels[u.id] || 0) > 0 && lvl - 1 < u.level) {
+      return `${catalog.byId.get(u.id).name} needs it at Lv ${u.level}`;
+    }
+  }
+  if (lvl === node.maxLevel) {
+    for (const tree of TREES) {
+      if (tree.requires.includes(node.treeId) && nodesOf(tree.id).some((n) => plan.levels[n.id])) {
+        return `${tree.name} needs ${treeById.get(node.treeId).name} finished`;
+      }
+    }
+  }
+  return null;
+}
+
+function planLabDownBlocker() {
+  if (plan.labLevel <= 1) return "The Laboratory is at level 1";
+  const needs = catalog.nodes.find((n) => plan.levels[n.id] && n.labRequired >= plan.labLevel);
+  return needs ? `${needs.name} needs Laboratory Lv ${needs.labRequired}` : null;
+}
+
+function planChange(fn) {
+  planMessage = fn() || planMessage;
+  savePlan();
+  renderPlay();
+  refreshDetail();
+}
+
+function planUp(nodeId) {
+  const node = catalog.byId.get(nodeId);
+  const lvl = plan.levels[node.id] || 0;
+  if (lvl >= node.maxLevel || blocker(catalog, node, plan.levels, plan.labLevel)) return;
+  planChange(() => {
+    plan.levels[node.id] = lvl + 1;
+    const unlocked = node.unlocks
+      .map((u) => catalog.byId.get(u.id))
+      .filter((n) => !plan.levels[n.id] && !blocker(catalog, n, plan.levels, plan.labLevel));
+    return `${node.name} is now Lv ${lvl + 1}.${unlocked.length ? ` Unlocked: ${unlocked.map((n) => n.name).join(", ")}.` : ""}`;
+  });
+}
+
+function planDown(nodeId) {
+  const node = catalog.byId.get(nodeId);
+  if (planDownBlocker(node)) return;
+  planChange(() => {
+    const lvl = plan.levels[node.id] - 1;
+    if (lvl) plan.levels[node.id] = lvl;
+    else delete plan.levels[node.id];
+    return `${node.name} is back to Lv ${lvl}.`;
+  });
+}
+
+function planSetLab(level) {
+  const target = Math.min(config.labMaxLevel, Math.max(1, level));
+  if (target < plan.labLevel && planLabDownBlocker()) return;
+  planChange(() => {
+    plan.labLevel = target;
+    return `Laboratory is now Lv ${target}.`;
+  });
+}
+
+function renderPlanHud(view) {
+  const spent = emptyCost();
+  let baseTime = 0;
+  let levels = 0;
+  let power = 0;
+  for (const node of catalog.nodes) {
+    const lvl = plan.levels[node.id] || 0;
+    if (!lvl) continue;
+    const r = levelRange(node, 1, lvl);
+    for (const k of RESOURCES) spent[k] += r.cost[k];
+    baseTime += r.time;
+    levels += lvl;
+    power += lvl * node.power;
+  }
+
+  $("#plan-lab").textContent = `Lv ${plan.labLevel}`;
+  const downWhy = planLabDownBlocker();
+  $("#plan-lab-down").disabled = Boolean(downWhy);
+  $("#plan-lab-down").title = downWhy || "Lower Laboratory level";
+  $("#plan-lab-up").disabled = plan.labLevel >= config.labMaxLevel;
+
+  $("#plan-stats").replaceChildren(
+    el("div", {}, el("span", { class: "eyebrow" }, "Levels"), el("b", { class: "num" }, `${fmt.format(levels)} / ${fmt.format(totalLevels)}`), el("small", {}, `${TREES.filter((t) => view.complete.get(t.id)).length} of ${TREES.length} trees finished`)),
+    el("div", {}, el("span", { class: "eyebrow" }, "Power"), el("b", { class: "num" }, fmt.format(power)), el("small", {}, "from research")),
+    el("div", {}, el("span", { class: "eyebrow" }, "Research speed"), el("b", { class: "num" }, `+${view.speed.toFixed(1)}%`), el("small", {}, "shortens timers")),
+    el("div", {}, el("span", { class: "eyebrow" }, "Research time"), el("b", { class: "num" }, formatDuration(baseTime)), el("small", {}, "base timers, before speed bonuses"))
+  );
+  $("#plan-spent").replaceChildren(
+    ...RESOURCES.map((r) =>
+      el("div", { class: "res" },
+        el("span", { class: "eyebrow res-label" }, resIcon(r), RES_LABEL[r]),
+        el("b", { class: "num" }, compact(spent[r])),
+        el("small", {}, r === "badges" ? "Research Badges" : "spent")))
+  );
+  $("#plan-message").textContent = planMessage;
+}
+
+let planResetArmed = null;
+function wirePlan() {
+  for (const name of ["plan", "real"]) {
+    $(`#rules-${name}`).addEventListener("click", () => {
+      rules = name;
+      writeStorage(RULES_KEY, name);
+      renderSettingsNote();
+      renderPlay();
+    });
+  }
+  $("#plan-lab-up").addEventListener("click", () => planSetLab(plan.labLevel + 1));
+  $("#plan-lab-down").addEventListener("click", () => planSetLab(plan.labLevel - 1));
+  $("#plan-reset").addEventListener("click", (e) => {
+    const btn = e.currentTarget;
+    if (!planResetArmed) {
+      btn.textContent = "Click again to reset";
+      planResetArmed = setTimeout(() => {
+        planResetArmed = null;
+        btn.textContent = "Reset to zero";
+      }, 3000);
+      return;
+    }
+    clearTimeout(planResetArmed);
+    planResetArmed = null;
+    btn.textContent = "Reset to zero";
+    planChange(() => {
+      plan = { levels: {}, labLevel: 1 };
+      return "Everything is back to zero.";
+    });
+  });
+}
+
 // ---------- detail dialog ----------
 
 let detail = null; // { nodeId, mode }
@@ -922,8 +1146,9 @@ function renderDetail() {
   const tree = treeById.get(node.treeId);
   const stat = STATS[node.stat];
   const isPlay = detail.mode === "play";
-  const view = isPlay ? playView() : autoView(selectedDay);
-  const events = isPlay ? playLab.events : result.events;
+  const isPlan = detail.mode === "plan";
+  const view = isPlan ? planView() : isPlay ? playView() : autoView(selectedDay);
+  const events = isPlay ? playLab.events : isPlan ? [] : result.events;
   const lvl = view.levels[node.id] || 0;
   const busyQ = isPlay ? playLab.queues.find((q) => q.nodeId === node.id) : view.busy.get(node.id);
 
@@ -940,8 +1165,22 @@ function renderDetail() {
 
   // Action area (play) or context line (auto).
   let action;
+  const downWhy = isPlan ? planDownBlocker(node) : null;
+  const downBtn = isPlan && lvl > 0
+    ? el("button", { type: "button", class: "btn", disabled: Boolean(downWhy), title: downWhy || "", onclick: () => planDown(node.id) }, "− Remove a level")
+    : null;
   if (lvl >= node.maxLevel) {
-    action = el("p", { class: "d-state done" }, icon("check"), "Maxed. Every level of this research is done.");
+    action = el("div", { class: "d-action-row" },
+      el("p", { class: "d-state done" }, icon("check"), "Maxed. Every level of this research is done."), downBtn);
+  } else if (isPlan) {
+    const why = blocker(catalog, node, plan.levels, plan.labLevel, view.complete);
+    const labBtn = plan.labLevel < node.labRequired
+      ? el("button", { type: "button", class: "btn", onclick: () => planSetLab(node.labRequired) }, `Raise Laboratory to Lv ${node.labRequired}`)
+      : null;
+    action = why
+      ? el("div", { class: "d-action-row" }, el("p", { class: "d-state locked" }, icon("lock"), `Locked. Needs ${why}.`), labBtn, downBtn)
+      : el("div", { class: "d-action-row" },
+        el("button", { type: "button", class: "btn primary big", onclick: () => planUp(node.id) }, `+ Upgrade to Lv ${lvl + 1}`), downBtn);
   } else if (isPlay) {
     const s = playLab.status(node);
     if (s.state === "ready") {
@@ -972,16 +1211,17 @@ function renderDetail() {
   if (lvl < node.maxLevel) {
     const L = lvl + 1;
     const paid = Boolean(busyQ);
+    const showStock = !paid && Boolean(view.stock);
     const cost = node.cost(L);
     const haveLabel = isPlay ? "You have" : `Stock on day ${selectedDay}`;
     const resRows = RESOURCES.filter((r) => cost[r] > 0).map((r) => {
-      const have = Math.floor(view.stock[r]);
+      const have = showStock ? Math.floor(view.stock[r]) : 0;
       const short = cost[r] - have;
       return el("tr", {},
         el("td", {}, el("span", { class: "res-label" }, resIcon(r), RES_LABEL[r])),
         el("td", { class: "num" }, el("b", {}, fmt.format(cost[r]))),
-        paid ? null : el("td", { class: "num" }, fmt.format(have)),
-        paid ? null : el("td", {}, short > 0 ? chip("short", "cross", `Short ${compact(short)}`) : chip("done", "check", "Enough")));
+        showStock ? el("td", { class: "num" }, fmt.format(have)) : null,
+        showStock ? el("td", {}, short > 0 ? chip("short", "cross", `Short ${compact(short)}`) : chip("done", "check", "Enough")) : null);
     });
     const restFrom = paid ? L + 1 : L;
     const rest = restFrom <= node.maxLevel ? levelRange(node, restFrom, node.maxLevel) : null;
@@ -991,12 +1231,12 @@ function renderDetail() {
         el("table", { class: "res-table" },
           el("thead", {}, el("tr", {},
             el("th", {}, "Resource"), el("th", { class: "num" }, "Needed"),
-            paid ? null : el("th", { class: "num" }, haveLabel), paid ? null : el("th", {}, "Status"))),
+            showStock ? el("th", { class: "num" }, haveLabel) : null, showStock ? el("th", {}, "Status") : null)),
           el("tbody", {}, ...resRows,
             el("tr", { class: "timer-row" },
               el("td", {}, el("span", { class: "res-label" }, icon("clock"), "Research time")),
               el("td", { class: "num" }, el("b", {}, formatDuration(researchDuration(node.time(L), view.speed)))),
-              paid ? null : el("td", { class: "num muted", colspan: 2 }, `at +${view.speed.toFixed(1)}% speed, before helps`))))),
+              el("td", { class: "num muted", colspan: showStock ? 2 : 1 }, `at +${view.speed.toFixed(1)}% speed, before helps`))))),
       rest
         ? el("div", { class: "d-total" },
           el("span", { class: "eyebrow" }, restFrom === node.maxLevel
@@ -1004,6 +1244,11 @@ function renderDetail() {
             : `Levels ${restFrom}–${node.maxLevel} together`),
           costList(rest.cost, isPlay ? view.stock : null),
           el("span", { class: "muted" }, ` · ${formatDuration(researchDuration(rest.time, view.speed))} of research`))
+        : null,
+      isPlan && lvl > 0
+        ? el("div", { class: "d-total" },
+          el("span", { class: "eyebrow" }, `Spent on levels 1–${lvl}`),
+          costList(levelRange(node, 1, lvl).cost))
         : null);
   }
 
@@ -1074,7 +1319,7 @@ function renderDetail() {
             el("th", { class: "num" }, "Lv"), el("th", {}, "Bonus"),
             ...usedRes.map((r) => el("th", { class: "num d-res" }, el("span", { class: "res-label" }, resIcon(r), RES_LABEL[r]))),
             el("th", { class: "num" }, "Timer"),
-            el("th", {}, isPlay ? "Finished" : "Auto plan"))),
+            el("th", {}, isPlay ? "Finished" : isPlan ? "Status" : "Auto plan"))),
           el("tbody", {}, ...rows),
           el("tfoot", {}, el("tr", {},
             el("td", {}), el("td", {}, el("b", {}, "All levels")),
@@ -1099,7 +1344,7 @@ function wireDetail() {
 
 const initialTab = location.hash === "#play" || location.hash === "#auto"
   ? location.hash.slice(1)
-  : readStorage(TAB_KEY) === "play" ? "play" : "auto";
+  : readStorage(TAB_KEY) === "auto" ? "auto" : "play";
 
 buildSettings();
 wireTabs();
@@ -1109,5 +1354,7 @@ wireDetail();
 $("#day").addEventListener("input", (e) => selectDay(Number(e.target.value)));
 $("#play").addEventListener("click", togglePlayback);
 playLab = loadPlay();
+plan = loadPlan();
+wirePlan();
 run();
 setTab(initialTab);
