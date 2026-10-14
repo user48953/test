@@ -2,6 +2,7 @@
 // run `npm run fetch-sources && npm run build-data` to rebuild it.
 //
 // Research trees from lastz.fandom.com, ztools.co.uk, gamides.com and lastz.gg.
+// Each tree's art is the game's Laboratory card artwork, copied into assets/trees/.
 // Per node: cost per level for each resource, bonuses (total at each level),
 // power (total at each level), parents (each must be maxed first), and the
 // Laboratory level it needs when the source gives one. estCost lists levels
@@ -28,14 +29,21 @@ export const SITES = [
   }
 ];
 
+// Tree artwork: the game's Laboratory card art, as served by ztools.co.uk.
+export const ART_SOURCE = "ztools.co.uk";
+
 export const UNPUBLISHED = [
   {
+    "id": "eliteTroops",
     "name": "Elite Troops",
-    "note": "Badge-free; lastz.gg says it raises training speed for all three troop types. Military Strategies needs it finished. None of the four sources lists its research."
+    "note": "Badge-free; lastz.gg says it raises training speed for all three troop types. Military Strategies needs it finished. None of the four sources lists its research.",
+    "art": "assets/trees/eliteTroops.webp"
   },
   {
+    "id": "rapidGrowth",
     "name": "Rapid Growth",
-    "note": "Badge-free, per lastz.gg. None of the four sources lists its research."
+    "note": "Badge-free, per lastz.gg. None of the four sources lists its research.",
+    "art": "assets/trees/rapidGrowth.webp"
   }
 ];
 
@@ -45,6 +53,7 @@ export const TREES = [
     "name": "New Home",
     "currency": "resources",
     "description": "The first tree. Construction and research speed, resource production and protection, and the research that opens the Shooter and Rider Camps and troop promotions.",
+    "art": "assets/trees/newHome.webp",
     "sources": [
       "lastz.fandom.com"
     ],
@@ -110,6 +119,7 @@ export const TREES = [
     "name": "Shelter Building",
     "currency": "resources",
     "description": "Production, storage and gathering for food, wood, Zents and Electricity, plus construction and research speed. Finishing it opens Shelter Manager.",
+    "art": "assets/trees/shelterBuilding.webp",
     "sources": [
       "lastz.fandom.com"
     ],
@@ -143,6 +153,7 @@ export const TREES = [
     "name": "Shelter Manager",
     "currency": "resources",
     "description": "Opens once Shelter Building is maxed: bigger production, storage, protection and gathering bonuses, healing speed and hospital space. lastz.gg calls this tree HQ Management.",
+    "art": "assets/trees/shelterManager.webp",
     "sources": [
       "lastz.fandom.com"
     ],
@@ -185,6 +196,7 @@ export const TREES = [
     "name": "Hero Training",
     "currency": "badges",
     "description": "Unlock hero bonuses, extra troop slots per hero, and faction-specific combat upgrades.",
+    "art": "assets/trees/heroTraining.webp",
     "sources": [
       "ztools.co.uk",
       "gamides.com"
@@ -216,6 +228,7 @@ export const TREES = [
     "name": "Alliance Recognition",
     "currency": "badges",
     "description": "Gathering bonuses, event score multipliers, and production line expansion for alliance activities.",
+    "art": "assets/trees/allianceRecognition.webp",
     "sources": [
       "ztools.co.uk",
       "gamides.com"
@@ -258,6 +271,7 @@ export const TREES = [
     "name": "Fully Armed Alliance",
     "currency": "badges",
     "description": "Alliance combat bonuses including Annihilation, Peace Breaker, and troop size expansion.",
+    "art": "assets/trees/fullyArmedAlliance.webp",
     "sources": [
       "ztools.co.uk",
       "gamides.com"
@@ -299,6 +313,7 @@ export const TREES = [
     "name": "Military Strategies",
     "currency": "badges",
     "description": "Core combat stats: troop attack, defense, and HP. First tree to prioritize for new accounts.",
+    "art": "assets/trees/militaryStrategies.webp",
     "sources": [
       "ztools.co.uk",
       "gamides.com"
@@ -335,6 +350,7 @@ export const TREES = [
     "name": "Siege to Seize",
     "currency": "badges",
     "description": "Assault technologies: Load Module, Demolition Crew, Joint Operations, and Mobile Operations.",
+    "art": "assets/trees/siegeToSeize.webp",
     "sources": [
       "ztools.co.uk",
       "gamides.com"
@@ -376,6 +392,7 @@ export const TREES = [
     "name": "Peace Shield",
     "currency": "badges",
     "description": "Defensive upgrades including Auto Repair, Urgent Rescue (fewer troop deaths in PvP), and shield mechanics.",
+    "art": "assets/trees/peaceShield.webp",
     "sources": [
       "ztools.co.uk",
       "gamides.com"
@@ -415,6 +432,7 @@ export const TREES = [
     "name": "Field",
     "currency": "badges",
     "description": "Battlefield combat upgrades including the Recharge Shield path. Leads to T10 troop path.",
+    "art": "assets/trees/field.webp",
     "sources": [
       "ztools.co.uk",
       "gamides.com"
@@ -452,6 +470,7 @@ export const TREES = [
     "name": "Army Building",
     "currency": "badges",
     "description": "Advanced troop formation bonuses, Recharge Shield, and faction attack/defense upgrades.",
+    "art": "assets/trees/armyBuilding.webp",
     "sources": [
       "ztools.co.uk",
       "gamides.com"
@@ -498,6 +517,7 @@ export const TREES = [
     "name": "Shooter Training",
     "currency": "badges",
     "description": "Shooter ATK, DEF and HP, plus siege and in-field bonuses for all troops. Opens at Laboratory Lv 25 with Field finished.",
+    "art": "assets/trees/shooterTraining.webp",
     "sources": [
       "lastz.gg",
       "ztools.co.uk"
@@ -531,6 +551,7 @@ export const TREES = [
     "name": "Assaulter Training",
     "currency": "badges",
     "description": "Assaulter ATK, DEF and HP, plus siege and in-field bonuses for all troops. Opens at Laboratory Lv 25 with Field finished.",
+    "art": "assets/trees/assaulterTraining.webp",
     "sources": [
       "lastz.gg"
     ],
@@ -565,6 +586,7 @@ export const TREES = [
     "name": "Rider Training",
     "currency": "badges",
     "description": "Rider ATK, DEF and HP, plus siege and in-field bonuses for all troops. Opens at Laboratory Lv 25 with Field finished.",
+    "art": "assets/trees/riderTraining.webp",
     "sources": [
       "lastz.gg"
     ],
@@ -599,6 +621,7 @@ export const TREES = [
     "name": "Unit Special Training",
     "currency": "badges",
     "description": "The T10 troop path. 1.48M badges to fully unlock Tier 10 units — the strongest troops in the game.",
+    "art": "assets/trees/unitSpecialTraining.webp",
     "sources": [
       "ztools.co.uk",
       "gamides.com",

@@ -19,6 +19,14 @@ get fandom-technologies.json "https://lastz.fandom.com/api.php?action=parse&page
 # ztools.co.uk: every badge tree is embedded in the page as JSON.
 get ztools-research.html "https://ztools.co.uk/tools/research/"
 
+# ztools.co.uk also serves the game's artwork for each Laboratory tree.
+mkdir -p "$OUT/art"
+for t in new-home shelter-building hq-management hero-training alliance-recognition fully-armed-alliance \
+  military-strategies siege-to-seize peace-shield field army-building shooter-training assaulter-training \
+  rider-training unit-special-training elite-troops rapid-growth; do
+  get "art/$t.webp" "https://ztools.co.uk/icons/research/$t.webp"
+done
+
 # gamides.com: one page per badge tree.
 for t in hero_training military_strategies alliance_recognition siege_to_seize peace_shield \
   fully_armed_alliance field army_building unit_special_training; do

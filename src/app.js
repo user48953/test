@@ -1,4 +1,4 @@
-import { TREES, DEFAULT_CONFIG, UNPUBLISHED, RESEARCH_SPEED } from "./data.js";
+import { TREES, DEFAULT_CONFIG, UNPUBLISHED, RESEARCH_SPEED, ART_SOURCE } from "./data.js";
 import {
   DAY, RESOURCES, Lab, buildCatalog, simulate, levelsAt, blocker, labLevelAt, progressMap,
   bonusTotals, researchBonus, treeProgress, treeRequirementText, meetsPct, researchDuration, formatDuration,
@@ -602,7 +602,14 @@ function treeGate(tree, view) {
 }
 
 function sourceLine(tree) {
-  return el("p", { class: "tree-src" }, `Data: ${tree.sources.join(", ")}`);
+  return el("p", { class: "tree-src" }, `Data: ${tree.sources.join(", ")} · Art: ${ART_SOURCE}`);
+}
+
+// The tree's in-game Laboratory card art. Decorative: the tree name sits beside it.
+function treeArt(tree, cls) {
+  return tree.art
+    ? el("img", { class: cls, src: tree.art, alt: "", width: 222, height: 162, loading: "lazy", decoding: "async" })
+    : null;
 }
 
 // view: { levels, labLevel, progress, complete, state(node) -> { cls, label, note } }
@@ -628,10 +635,13 @@ function renderTreeMap(container, view, mode) {
       const notes = [...tree.conditions.map((c) => `Also needs ${c}.`), ...tree.notes];
 
       const card = el("div", { class: `tree${done ? " is-done" : ""}` },
-        el("div", { class: "tree-head" },
-          el("h3", {}, tree.name),
-          el("span", { class: "num" }, `${got}/${max}`)),
-        el("p", { class: "tree-desc" }, tree.description),
+        el("div", { class: "tree-top" },
+          treeArt(tree, "tree-art"),
+          el("div", { class: "tree-top-text" },
+            el("div", { class: "tree-head" },
+              el("h3", {}, tree.name),
+              el("span", { class: "num" }, `${got}/${max}`)),
+            el("p", { class: "tree-desc" }, tree.description))),
         sourceLine(tree),
         notes.length
           ? el("details", { class: "tree-notes" }, el("summary", {}, notes.length === 1 ? "1 note on this data" : `${notes.length} notes on this data`),
@@ -681,7 +691,8 @@ function unpublishedCard() {
   return el("div", { class: "tree tree-missing" },
     el("div", { class: "tree-head" }, el("h3", {}, "Not listed")),
     el("p", { class: "tree-desc" }, "These trees are in the game, but none of the four sources lists their research, so they aren't simulated."),
-    el("ul", { class: "missing-list" }, ...UNPUBLISHED.map((u) => el("li", {}, el("b", {}, u.name), ` ${u.note}`))));
+    el("ul", { class: "missing-list" }, ...UNPUBLISHED.map((u) =>
+      el("li", {}, treeArt(u, "missing-art"), el("span", {}, el("b", {}, u.name), ` ${u.note}`)))));
 }
 
 // ---------- auto plan: day view ----------
@@ -1376,9 +1387,11 @@ function renderDetail() {
 
   $("#detail-body").replaceChildren(
     el("div", { class: "d-head" },
-      el("div", {},
-        el("div", { class: "eyebrow" }, `${tree.name} · Row ${node.tier + 1} · ${tree.currency === "badges" ? "Badge research" : "Electricity and Zents"}`),
-        el("h2", { id: "detail-title" }, node.name)),
+      el("div", { class: "d-title" },
+        treeArt(tree, "d-art"),
+        el("div", {},
+          el("div", { class: "eyebrow" }, `${tree.name} · Row ${node.tier + 1} · ${tree.currency === "badges" ? "Badge research" : "Electricity and Zents"}`),
+          el("h2", { id: "detail-title" }, node.name))),
       el("button", { type: "button", class: "icon-btn", "aria-label": "Close", onclick: () => $("#detail").close() }, icon("cross"))),
     el("p", { class: "d-desc" }, bonusName),
     el("div", { class: "d-effect" },

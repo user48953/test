@@ -9,9 +9,9 @@
 // This file holds what none of the sources publish: research timers, and
 // default settings for the simulation.
 
-import { TREES, SITES, UNPUBLISHED, BUILT } from "./research-data.js";
+import { TREES, SITES, UNPUBLISHED, BUILT, ART_SOURCE } from "./research-data.js";
 
-export { TREES, SITES, UNPUBLISHED, BUILT };
+export { TREES, SITES, UNPUBLISHED, BUILT, ART_SOURCE };
 
 // Research timers aren't published. A level's base timer is estimated from the
 // power it adds: 0.08 minutes per point of power. The first New Home research

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { TREES, DEFAULT_CONFIG, TIMER } from "../src/data.js";
+import { readFileSync } from "node:fs";
+import { TREES, DEFAULT_CONFIG, TIMER, UNPUBLISHED } from "../src/data.js";
 import {
   buildCatalog, simulate, levelsAt, blocker, labLevelAt, formatDuration, Lab, DAY, RESOURCES,
   treeProgress, progressMap, meetsPct, bonusTotals, researchBonus,
@@ -195,6 +196,13 @@ const newLab = (overrides = {}) => new Lab(catalog, { ...DEFAULT_CONFIG, ...over
 const ST = () => node("newHome", "Stacking Technique");
 const WP = () => node("newHome", "Wind Power");
 const SM = () => node("newHome", "Stock Manage I");
+
+test("every tree has its artwork", () => {
+  for (const tree of [...TREES, ...UNPUBLISHED]) {
+    const buf = readFileSync(new URL(`../${tree.art}`, import.meta.url));
+    assert.equal(buf.toString("ascii", 8, 12), "WEBP", tree.art);
+  }
+});
 
 test("every tree has a description and sources", () => {
   for (const tree of TREES) {

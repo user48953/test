@@ -76,7 +76,7 @@ limits, time skips, speedups, saving) behaves correctly.
 | Source | Used for |
 |---|---|
 | [lastz.fandom.com](https://lastz.fandom.com/wiki/Technologies) | New Home, Shelter Building and Shelter Manager: research, links, Laboratory levels, Electricity and Zents costs, bonuses, power |
-| [ztools.co.uk](https://ztools.co.uk/tools/research/) | The badge trees: research, links, badge cost per level, bonuses, power, and each tree's unlock rule |
+| [ztools.co.uk](https://ztools.co.uk/tools/research/) | The badge trees: research, links, badge cost per level, bonuses, power, and each tree's unlock rule; the game's Laboratory card art for every tree (`assets/trees/`) |
 | [lastz.gg](https://lastz.gg/basics/technologies) | Shooter, Assaulter and Rider Training (exact costs, bonuses and power per level); a level-by-level check of Unit Special Training |
 | [gamides.com](https://gamides.com/research/) | Tree descriptions, and badge totals to cross-check ztools.co.uk |
 
@@ -111,7 +111,7 @@ the app shows that requirement but treats it as met. "Join an Alliance" and "HQ 
 
 ```sh
 npm run fetch-sources   # downloads the four sources into sources/raw/
-npm run build-data      # parses them into src/research-data.js
+npm run build-data      # parses them into src/research-data.js and copies the tree art
 ```
 
 The build parses the pages and the sites' JavaScript data as plain data (nothing
@@ -141,6 +141,7 @@ before writing. `npm test` then checks the result.
 |---|---|
 | `index.html` | Page layout and styles |
 | `src/research-data.js` | The research trees, generated from the four sources (don't edit by hand) |
+| `assets/trees/` | Each tree's in-game Laboratory card art, copied from ztools.co.uk by the build |
 | `src/data.js` | Timer estimate and default settings |
 | `src/sim.js` | Engine: the `Lab` game state and the `simulate()` auto plan (no DOM) |
 | `src/app.js` | UI: settings, free planning, real-time play, auto plan, chart, tree map, research details |

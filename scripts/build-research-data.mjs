@@ -13,13 +13,14 @@
 //
 // Usage: node scripts/build-research-data.mjs [raw-folder]
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const RAW = process.argv[2] || join(ROOT, "sources/raw");
 const OUT = join(ROOT, "src/research-data.js");
+const ART_DIR = join(ROOT, "assets/trees");
 const read = (file) => readFileSync(join(RAW, file), "utf8");
 
 export const SITES = {
@@ -70,13 +71,37 @@ const TREES = [
   { id: "unitSpecialTraining", ztools: "unit-special-training", gamides: "unit_special_training", lastzgg: "T10Calculator" },
 ];
 
+// ztools.co.uk's file name for each tree's artwork (the game's own Laboratory
+// card art). Shelter Manager is the tree ztools and lastz.gg call HQ Management.
+const ART = {
+  newHome: "new-home",
+  shelterBuilding: "shelter-building",
+  shelterManager: "hq-management",
+  heroTraining: "hero-training",
+  allianceRecognition: "alliance-recognition",
+  fullyArmedAlliance: "fully-armed-alliance",
+  militaryStrategies: "military-strategies",
+  siegeToSeize: "siege-to-seize",
+  peaceShield: "peace-shield",
+  field: "field",
+  armyBuilding: "army-building",
+  shooterTraining: "shooter-training",
+  assaulterTraining: "assaulter-training",
+  riderTraining: "rider-training",
+  unitSpecialTraining: "unit-special-training",
+  eliteTroops: "elite-troops",
+  rapidGrowth: "rapid-growth",
+};
+
 // Trees the sources name but don't list nodes for.
 const UNPUBLISHED = [
   {
+    id: "eliteTroops",
     name: "Elite Troops",
     note: "Badge-free; lastz.gg says it raises training speed for all three troop types. Military Strategies needs it finished. None of the four sources lists its research.",
   },
   {
+    id: "rapidGrowth",
     name: "Rapid Growth",
     note: "Badge-free, per lastz.gg. None of the four sources lists its research.",
   },
@@ -599,6 +624,21 @@ for (const tree of built.values()) {
   }
 }
 
+// ---------- artwork ----------
+
+// Copies a tree's artwork into assets/trees/ after checking it is a WebP
+// image, and returns the path the page loads it from.
+function copyArt(treeId) {
+  const file = join(RAW, "art", `${ART[treeId]}.webp`);
+  const buf = readFileSync(file);
+  if (buf.toString("ascii", 0, 4) !== "RIFF" || buf.toString("ascii", 8, 12) !== "WEBP") {
+    throw new Error(`${file} is not a WebP image`);
+  }
+  mkdirSync(ART_DIR, { recursive: true });
+  writeFileSync(join(ART_DIR, `${treeId}.webp`), buf);
+  return `assets/trees/${treeId}.webp`;
+}
+
 // ---------- ids, names, layout, output ----------
 
 const treeNames = new Map([...built.values()].map((t) => [t.name, t.meta.id]));
@@ -660,6 +700,7 @@ for (const tree of built.values()) {
     name: tree.name,
     currency: meta.currency || "badges",
     description: tree.description,
+    art: copyArt(meta.id),
     sources: [...tree.sources].map((s) => SITES[s].name),
     lab: lab ?? (Number.isFinite(minLab) ? minLab : null),
     requires: trees,
@@ -707,6 +748,7 @@ const lines = [
   "// run `npm run fetch-sources && npm run build-data` to rebuild it.",
   "//",
   "// Research trees from lastz.fandom.com, ztools.co.uk, gamides.com and lastz.gg.",
+  "// Each tree's art is the game's Laboratory card artwork, copied into assets/trees/.",
   "// Per node: cost per level for each resource, bonuses (total at each level),",
   "// power (total at each level), parents (each must be maxed first), and the",
   "// Laboratory level it needs when the source gives one. estCost lists levels",
@@ -716,7 +758,10 @@ const lines = [
   "",
   `export const SITES = ${JSON.stringify(Object.values(SITES), null, 2)};`,
   "",
-  `export const UNPUBLISHED = ${JSON.stringify(UNPUBLISHED, null, 2)};`,
+  "// Tree artwork: the game's Laboratory card art, as served by ztools.co.uk.",
+  `export const ART_SOURCE = ${JSON.stringify(SITES.ztools.name)};`,
+  "",
+  `export const UNPUBLISHED = ${JSON.stringify(UNPUBLISHED.map((u) => ({ ...u, art: copyArt(u.id) })), null, 2)};`,
   "",
   "export const TREES = [",
   ...output.map((t) => {

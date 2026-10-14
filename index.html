@@ -310,6 +310,20 @@ abbr.est { text-decoration: none; cursor: help; color: var(--muted); margin-righ
 .tree-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .tree-head h3 { font-family: var(--font-display); font-size: var(--step-1); text-transform: uppercase; letter-spacing: 0.03em; }
 .tree-desc { font-size: 0.75rem; color: var(--muted); margin: 2px 0 10px; line-height: 1.35; }
+.tree-top { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; align-items: start; margin-bottom: 10px; }
+.tree-top-text { min-width: 0; }
+.tree-top .tree-desc { margin-bottom: 0; }
+.tree-art, .d-art, .missing-art {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 222 / 162;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--sunken);
+}
+.tree-art { width: 96px; }
 .tree-left { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 0.75rem; margin: -2px 0 10px; }
 .tree-left .eyebrow { font-size: 0.625rem; }
 .tree-lock { display: flex; align-items: center; gap: 5px; font-size: 0.75rem; font-weight: 600; color: var(--muted); margin: -4px 0 8px; }
@@ -318,7 +332,9 @@ abbr.est { text-decoration: none; cursor: help; color: var(--muted); margin-righ
 .tree-notes summary { cursor: pointer; width: fit-content; }
 .tree-notes ul { margin: 4px 0 0; padding-left: 16px; display: grid; gap: 3px; line-height: 1.35; }
 .tree-missing { border-style: dashed; align-self: start; }
-.missing-list { margin: 0; padding-left: 16px; display: grid; gap: 6px; font-size: 0.75rem; color: var(--muted); line-height: 1.35; }
+.missing-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; font-size: 0.75rem; color: var(--muted); line-height: 1.35; }
+.missing-list li { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; align-items: start; }
+.missing-art { width: 64px; }
 .missing-list b { color: var(--ink); }
 /* One line per row of the in-game tree. Four-wide rows fold to 2×2 on narrow cards. */
 .tree { container-type: inline-size; }
@@ -459,6 +475,9 @@ dialog::backdrop { background: rgba(10, 12, 8, 0.55); }
 #detail-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 20px; }
 @media (max-width: 560px) { #detail-body { padding: 16px; } .d-head h2 { font-size: var(--step-2); } }
 .d-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
+.d-title { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.d-art { width: 120px; flex: none; }
+@media (max-width: 560px) { .d-art { width: 76px; } }
 .d-head h2 { font-size: var(--step-3); line-height: 1; margin-top: 4px; }
 .icon-btn { border: 1px solid var(--line); background: var(--bg); border-radius: var(--radius); width: 34px; height: 34px; display: grid; place-items: center; cursor: pointer; flex: none; }
 .icon-btn:hover { border-color: var(--ink); }
@@ -719,7 +738,7 @@ footer p { max-width: 75ch; margin: 0; }
 
 <footer>
   <div class="wrap">
-    <p>Research trees, costs, bonuses and power come from <a href="https://lastz.fandom.com/wiki/Technologies">lastz.fandom.com</a>, <a href="https://ztools.co.uk/tools/research/">ztools.co.uk</a>, <a href="https://gamides.com/research/">gamides.com</a> and <a href="https://lastz.gg/basics/technologies">lastz.gg</a>. Costs marked ≈ aren't published by them and are estimated from the ones that are. No source publishes research timers, so those are estimates too: adjust the settings to match your account. Not affiliated with the makers of Last Z or with those sites.</p>
+    <p>Research trees, costs, bonuses and power come from <a href="https://lastz.fandom.com/wiki/Technologies">lastz.fandom.com</a>, <a href="https://ztools.co.uk/tools/research/">ztools.co.uk</a>, <a href="https://gamides.com/research/">gamides.com</a> and <a href="https://lastz.gg/basics/technologies">lastz.gg</a>. Costs marked ≈ aren't published by them and are estimated from the ones that are. Tree artwork is the game's Laboratory card art, as served by ztools.co.uk. No source publishes research timers, so those are estimates too: adjust the settings to match your account. Not affiliated with the makers of Last Z or with those sites.</p>
   </div>
 </footer>
 
