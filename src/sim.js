@@ -202,6 +202,31 @@ export class Lab {
     return Object.fromEntries(SAVED_FIELDS.map((k) => [k, this[k]]));
   }
 
+  // A smaller save for stores with a size limit: no per-day snapshots (only
+  // the auto plan reads those), finished levels as [nodeId, level, minute,
+  // start, duration], and the oldest levels dropped if it would still pass
+  // `maxBytes`.
+  toCompactJSON(maxBytes = 240_000) {
+    const r2 = (x) => Math.round(x * 100) / 100;
+    const { daily, events, ...rest } = this.toJSON();
+    const packed = { ...rest, events: events.map((e) => [e.nodeId, e.level, r2(e.minute), r2(e.start), r2(e.duration)]) };
+    while (packed.events.length && JSON.stringify(packed).length > maxBytes) {
+      packed.events.splice(0, Math.ceil(packed.events.length / 10));
+    }
+    return packed;
+  }
+
+  static fromCompactJSON(catalog, config, data) {
+    if (!data || !Array.isArray(data.events)) return null;
+    const events = [];
+    for (const e of data.events) {
+      const node = Array.isArray(e) && catalog.byId.get(e[0]);
+      if (!node) return null;
+      events.push({ minute: e[2], nodeId: e[0], treeId: node.treeId, name: node.name, level: e[1], start: e[3], duration: e[4] });
+    }
+    return Lab.fromJSON(catalog, config, { ...data, events });
+  }
+
   get labLevel() {
     return labLevelAt(this.config, this.t);
   }

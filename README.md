@@ -19,7 +19,14 @@ their real names, links, level counts, costs, bonuses and power.
 - **Real time**: a timed game. Tap **+** to start research, pay its resources,
   then skip time ahead and spend speedups (details below).
 
-Your plan and your game are saved in the browser, so they survive a reload.
+**Saving**: your settings, your free plan and your real-time game save as you go.
+On the published claude.ai page, signed in, they save to your own records for the
+page, which nobody else can read (not even the page's owner) and which follow you
+to any device; the header says "Saved to your account". Anywhere else (or signed
+out) they save in the browser only. People you share the page with need
+Contributor access to save their own; Viewers and Commenters save in their
+browser only. Long games are stored compactly (a fully researched game is about
+128 KB of the 256 KB each record allows).
 
 **Auto plan** runs the whole schedule at once and shows:
 

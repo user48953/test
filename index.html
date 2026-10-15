@@ -125,6 +125,12 @@ button, input, select { font: inherit; color: inherit; }
   letter-spacing: 0.01em;
 }
 .top h1 span { color: var(--accent); }
+.top-side { display: grid; gap: 10px; justify-items: start; }
+.save-status { display: inline-flex; align-items: center; gap: 7px; margin: 0; max-width: 42ch; font-family: var(--font-data); font-size: 0.75rem; color: var(--muted); }
+.save-status::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.save-status[data-state="saved"]::before { background: var(--good); }
+.save-status[data-state="saving"]::before, .save-status[data-state="loading"]::before { background: var(--accent); }
+.save-status[data-state="readonly"]::before, .save-status[data-state="full"]::before, .save-status[data-state="error"]::before { background: var(--warn); }
 .lede { max-width: 60ch; margin: 8px 0 0; color: var(--muted); }
 .stamp {
   font-family: var(--font-data);
@@ -566,7 +572,10 @@ footer p { max-width: 75ch; margin: 0; }
       <h1>Last Z <span>Research</span> Simulator</h1>
       <p class="lede">Plan or simulate how your Laboratory works through every research tree, with the research, costs and bonuses published by four Last Z community sites. Change your income, speedups and research order and see how many days each tree takes.</p>
     </div>
-    <div class="stamp">Timers estimated · tune to your account</div>
+    <div class="top-side">
+      <div class="stamp">Timers estimated · tune to your account</div>
+      <p class="save-status" id="save-status" role="status" aria-live="polite" data-state="local">Saved in this browser</p>
+    </div>
   </div>
 </header>
 

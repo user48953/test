@@ -282,3 +282,29 @@ test("a saved game restores exactly", () => {
   assert.deepEqual(copy.toJSON(), lab.toJSON());
   assert.equal(Lab.fromJSON(catalog, lab.config, { levels: { "nope.0.0": 1 } }), null);
 });
+
+test("a compact save restores the game and stays under the size limit", () => {
+  const lab = newLab({ speedupMinutesPerDay: 1e9, labStartLevel: 30, startingStock: { electricity: 1e12, zents: 1e12, badges: 1e9 } });
+  // Finish every level of every tree, one at a time.
+  for (let guard = 0; guard < 5000; guard++) {
+    const next = catalog.nodes.find((n) => lab.status(n).state === "ready");
+    if (!next) break;
+    lab.start(next);
+    lab.speedUp(0);
+  }
+  assert.equal(lab.events.length, catalog.nodes.reduce((s, n) => s + n.maxLevel, 0));
+  const packed = JSON.parse(JSON.stringify(lab.toCompactJSON()));
+  assert.ok(JSON.stringify(packed).length <= 240_000);
+  const copy = Lab.fromCompactJSON(catalog, lab.config, packed);
+  assert.deepEqual(copy.levels, lab.levels);
+  assert.equal(copy.power, lab.power);
+  assert.deepEqual(copy.stock, lab.stock);
+  assert.equal(copy.t, lab.t);
+  assert.ok(copy.events.length > 0);
+  assert.deepEqual(copy.events.at(-1).nodeId, lab.events.at(-1).nodeId);
+  // A tight limit drops the oldest levels, never the game state.
+  const small = Lab.fromCompactJSON(catalog, lab.config, lab.toCompactJSON(20_000));
+  assert.ok(small.events.length < lab.events.length);
+  assert.deepEqual(small.levels, lab.levels);
+  assert.equal(Lab.fromCompactJSON(catalog, lab.config, { events: [["nope.x", 1, 0, 0, 0]] }), null);
+});

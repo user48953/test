@@ -162,9 +162,8 @@ function writeStorage(key, value) {
   }
 }
 
-function loadConfig() {
+function loadConfig(saved = readStorage(STORAGE_KEY)) {
   const config = clone(DEFAULT_CONFIG);
-  const saved = readStorage(STORAGE_KEY);
   if (saved && typeof saved === "object") {
     for (const key of Object.keys(config)) {
       if (!(key in saved)) continue;
@@ -179,6 +178,143 @@ function loadConfig() {
 }
 
 let config = loadConfig();
+
+// ---------- saving ----------
+// Player data (settings, the free plan and the real-time game) is saved in
+// this browser at once. Inside the claude.ai viewer, with a signed-in player,
+// it is also saved to that player's own records (the db capability, under
+// data/users/<id>/), which nobody else can read and which follow them to any
+// device. The account copy is loaded when the page opens.
+
+const SAVES = {
+  settings: { local: STORAGE_KEY, browser: () => config, account: () => config, apply: applySettings },
+  plan: { local: PLAN_KEY, browser: () => plan, account: () => plan, apply: applyPlan },
+  game: { local: PLAY_KEY, browser: () => playLab.toJSON(), account: () => playLab.toCompactJSON(), apply: applyGame },
+};
+
+const cloud = {
+  doc: null, // (key) -> DocumentReference, once connected
+  status: "local",
+  boot: {}, // key -> account copy as of page load, to spot changes made before the account answers
+  last: {}, // key -> account copy last read or written, to skip unchanged writes
+  queued: new Map(), // key -> body waiting to be written
+  busy: new Set(), // keys with a write in flight
+  timer: null,
+};
+
+const SAVE_TEXT = {
+  local: "Saved in this browser",
+  loading: "Loading your saved data…",
+  saving: "Saving to your account…",
+  saved: "Saved to your account",
+  readonly: "Saved in this browser only: you need Contributor access to save to your account",
+  full: "Your account storage for this page is full. Saved in this browser.",
+  error: "Couldn't reach your account. Saved in this browser.",
+};
+
+function setSaveStatus(status) {
+  cloud.status = status;
+  const node = $("#save-status");
+  if (!node) return;
+  node.dataset.state = status;
+  node.textContent = SAVE_TEXT[status];
+}
+
+function save(key) {
+  const s = SAVES[key];
+  writeStorage(s.local, s.browser());
+  if (!cloud.doc || cloud.status === "readonly" || cloud.status === "full") return;
+  const data = s.account();
+  const json = JSON.stringify(data);
+  if (json === cloud.last[key]) return;
+  cloud.queued.set(key, { body: { v: 2, savedAt: Date.now(), data }, json });
+  setSaveStatus("saving");
+  // One write per pause: taps in quick succession become one save.
+  clearTimeout(cloud.timer);
+  cloud.timer = setTimeout(flushSaves, 700);
+}
+
+function flushSaves() {
+  for (const [key, item] of cloud.queued) {
+    if (cloud.busy.has(key)) continue; // written again once the current write finishes
+    cloud.queued.delete(key);
+    cloud.busy.add(key);
+    writeAccount(key, item).finally(() => {
+      cloud.busy.delete(key);
+      if (cloud.queued.size) flushSaves();
+      else if (!cloud.busy.size && cloud.status === "saving") setSaveStatus("saved");
+    });
+  }
+}
+
+async function writeAccount(key, item, retried = false) {
+  try {
+    await cloud.doc(key).set(item.body);
+    cloud.last[key] = item.json;
+  } catch (e) {
+    if (e?.code === "unavailable" && !retried) {
+      await new Promise((r) => setTimeout(r, 800 + Math.random() * 1200));
+      return writeAccount(key, item, true);
+    }
+    // invalid_argument here means this viewer may not write their records
+    // (a Viewer or Commenter on a shared page).
+    setSaveStatus(e?.code === "invalid_argument" ? "readonly" : e?.code === "quota_exceeded" ? "full" : "error");
+  }
+}
+
+// Connect to the player's records, load what's there, and upload what this
+// browser has that the account doesn't.
+async function connectAccount() {
+  if (!window.claude?.use) return; // not inside the claude.ai viewer
+  setSaveStatus("loading");
+  const [db, user] = await Promise.all([window.claude.use("db"), window.claude.use("user")]).catch(() => [null, null]);
+  const uid = user ? await user.id().catch(() => null) : null;
+  if (!db || !uid) return setSaveStatus("local");
+  const records = db.collection(`data/users/${uid}`);
+  let snaps;
+  try {
+    snaps = await Promise.all(Object.keys(SAVES).map((key) => records.doc(key).get()));
+  } catch {
+    return setSaveStatus("error");
+  }
+  cloud.doc = (key) => records.doc(key);
+  setSaveStatus("saved");
+  let loaded = false;
+  Object.keys(SAVES).forEach((key, i) => {
+    const saved = snaps[i].exists ? snaps[i].data()?.data : undefined;
+    const changedHere = JSON.stringify(SAVES[key].account()) !== cloud.boot[key];
+    if (saved && !changedHere) {
+      cloud.last[key] = JSON.stringify(saved);
+      SAVES[key].apply(saved);
+      loaded = true;
+    } else {
+      save(key); // first save to this account, or changed here before it answered
+    }
+  });
+  if (loaded) {
+    renderPlay();
+    refreshDetail();
+  }
+}
+
+function applySettings(saved) {
+  config = loadConfig(saved);
+  writeStorage(STORAGE_KEY, config);
+  buildSettings();
+  run();
+}
+
+function applyPlan(saved) {
+  plan = loadPlan(saved);
+  writeStorage(PLAN_KEY, plan);
+}
+
+function applyGame(saved) {
+  const lab = Lab.fromCompactJSON(catalog, config, saved);
+  if (!lab) return;
+  playLab = lab;
+  writeStorage(PLAY_KEY, playLab.toJSON());
+}
 
 const FIELD_GROUPS = [
   {
@@ -365,7 +501,7 @@ function scheduleRun() {
 
 function run() {
   const wasAtEnd = !result || selectedDay >= result.daily.length - 1;
-  writeStorage(STORAGE_KEY, config);
+  save("settings");
   result = simulate(catalog, config);
   let p = 0;
   cumulativePower = result.events.map((e) => (p += catalog.byId.get(e.nodeId).powerGain(e.level)));
@@ -811,7 +947,7 @@ function loadPlay() {
 }
 
 function savePlay() {
-  writeStorage(PLAY_KEY, playLab.toJSON());
+  save("game");
 }
 
 function playView() {
@@ -1023,8 +1159,7 @@ let rules = readStorage(RULES_KEY) === "real" ? "real" : "plan";
 let plan = null;
 let planMessage = "";
 
-function loadPlan() {
-  const saved = readStorage(PLAN_KEY);
+function loadPlan(saved = readStorage(PLAN_KEY)) {
   const levels = {};
   for (const [id, lvl] of Object.entries(saved?.levels || {})) {
     const node = catalog.byId.get(id);
@@ -1035,7 +1170,7 @@ function loadPlan() {
 }
 
 function savePlan() {
-  writeStorage(PLAN_KEY, plan);
+  save("plan");
 }
 
 function planView() {
@@ -1471,6 +1606,9 @@ $("#day").addEventListener("input", (e) => selectDay(Number(e.target.value)));
 $("#play").addEventListener("click", togglePlayback);
 playLab = loadPlay();
 plan = loadPlan();
+for (const key of Object.keys(SAVES)) cloud.boot[key] = JSON.stringify(SAVES[key].account());
+setSaveStatus("local");
 wirePlan();
 run();
 setTab(initialTab);
+connectAccount();
