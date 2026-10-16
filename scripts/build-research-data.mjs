@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-// Builds src/research-data.js from the four research sources saved by
+// Builds src/research-data.js from the research sources saved by
 // scripts/fetch-sources.sh:
 //
 //   lastz.fandom.com  New Home, Shelter Building and HQ Management (Electricity + Zents)
 //   ztools.co.uk      the badge trees: links, per-level badge costs, bonuses, power, unlock rules
 //   lastz.gg          exact Shooter, Assaulter and Rider Training data; checks Unit Special Training
 //   gamides.com       tree descriptions; badge totals to cross-check ztools
+//   wild-hoggs.com    Elite Troops and Rapid Growth, which the others don't list: every
+//                     level's costs, power, bonuses and timer, and each link's required level
 //
 // Where a source leaves a number out, it is estimated from the numbers that are
 // published, and the estimate is flagged in the output so the app can say so.
@@ -28,6 +30,7 @@ export const SITES = {
   ztools: { name: "ztools.co.uk", url: "https://ztools.co.uk/tools/research/" },
   gamides: { name: "gamides.com", url: "https://gamides.com/research/" },
   lastzgg: { name: "lastz.gg", url: "https://lastz.gg/basics/technologies" },
+  wildhoggs: { name: "wild-hoggs.com", url: "https://wild-hoggs.com/tools/research/" },
 };
 
 // ---------- trees, in the order the game unlocks them ----------
@@ -42,6 +45,10 @@ const TREES = [
     description: "Production, storage and gathering for food, wood, Zents and Electricity, plus construction and research speed. Finishing it opens HQ Management.",
   },
   {
+    id: "eliteTroops", currency: "resources", wildhoggs: "elite_troops",
+    description: "Troop ATK and DEF, training speed for all three troop types, ATK and DEF for each type, and siege and in-field bonuses. Finishing it opens Military Strategies.",
+  },
+  {
     // HQ Management is the in-game name; the fandom wiki lists it as "Shelter
     // Manager". The id keeps the wiki's name so saved progress still matches.
     id: "shelterManager", name: "HQ Management", currency: "resources", fandom: "Shelter Manager",
@@ -54,6 +61,10 @@ const TREES = [
   { id: "militaryStrategies", ztools: "military-strategies", gamides: "military_strategies" },
   { id: "siegeToSeize", ztools: "siege-to-seize", gamides: "siege_to_seize" },
   { id: "peaceShield", ztools: "peace-shield", gamides: "peace_shield" },
+  {
+    id: "rapidGrowth", currency: "resources", wildhoggs: "rapid_growth",
+    description: "Opens once HQ Management is finished: more construction and research speed, production and storage for every resource, Zent gathering and hospital space.",
+  },
   { id: "field", ztools: "field", gamides: "field" },
   { id: "armyBuilding", ztools: "army-building", gamides: "army_building" },
   {
@@ -95,19 +106,11 @@ const ART = {
   rapidGrowth: "rapid-growth",
 };
 
-// Trees the sources name but don't list nodes for.
-const UNPUBLISHED = [
-  {
-    id: "eliteTroops",
-    name: "Elite Troops",
-    note: "Badge-free; lastz.gg says it raises training speed for all three troop types. Military Strategies needs it finished. None of the four sources lists its research.",
-  },
-  {
-    id: "rapidGrowth",
-    name: "Rapid Growth",
-    note: "Badge-free, per lastz.gg. None of the four sources lists its research.",
-  },
-];
+// Trees the sources name but don't list nodes for (none at the moment).
+const UNPUBLISHED = [];
+
+// wild-hoggs.com tree ids for trees named in another tree's unlock rule.
+const WILDHOGGS_TREE_NAMES = { hq_management: "HQ Management", elite_troops: "Elite Troops" };
 
 // ---------- small helpers ----------
 
@@ -136,7 +139,7 @@ function amount(text) {
   return Math.round(Number(m[1]) * mult);
 }
 
-// One wording per bonus across all four sources, so totals add up.
+// One wording per bonus across all the sources, so totals add up.
 function normLabel(label) {
   return label
     .replace(/\s+/g, " ")
@@ -149,6 +152,15 @@ function normLabel(label) {
     .replace(/\bAttack\b/g, "ATK")
     .replace(/\bDefense\b/g, "DEF")
     .replace(/^Field Troop/, "In-field Troop")
+    .replace(/in Siege Attacks$/, "in Siege Assaults")
+    .replace(/^Wind Turbine Production Speed$/, "Wind Turbine Productivity")
+    .replace(/^Wind Turbine's Storage$/, "Wind Turbine Storage")
+    .replace(/^Residence's Zent Production Speed$/, "Residence Productivity")
+    .replace(/^Residence's Zent Storage$/, "Residence Storage")
+    .replace(/^Lumberyard's Storage$/, "Lumberyard Storage")
+    .replace(/^Farm Storage$/, "Farmhouse Storage")
+    .replace(/^(Wood|Food) Production Speed$/, "$1 Production")
+    .replace(/^Destruction$/, "Destruction Value")
     .trim();
 }
 
@@ -296,6 +308,34 @@ function parseJsLiterals(src) {
   return { nodes, rows };
 }
 
+// wild-hoggs.com: each research calculator page embeds its tree as Astro
+// component props, serialized as [0, value] (plain) and [1, [...]] (array).
+function parseWildHoggs(html) {
+  const m = html.match(/<astro-island[^>]*ResearchCategoryCalculator[^>]*props="([^"]*)"/);
+  if (!m) throw new Error("wild-hoggs: research props not found");
+  const unescape = (s) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+  const dec = (v) => {
+    if (Array.isArray(v) && v.length === 2 && Number.isInteger(v[0])) {
+      if (v[0] === 1) return v[1].map(dec);
+      return v[1] && typeof v[1] === "object" && !Array.isArray(v[1])
+        ? Object.fromEntries(Object.entries(v[1]).map(([k, x]) => [k, dec(x)]))
+        : v[1];
+    }
+    return v;
+  };
+  const props = JSON.parse(unescape(m[1]));
+  return dec(props.categoryData);
+}
+
+// Effect names from the calculator's script: `35e3:{format:"percent",names:{en:"Troop ATK",...`
+function parseWildHoggsEffects(js) {
+  const effects = {};
+  for (const m of js.matchAll(/[{,](\d+(?:e\d+)?):\{format:"(\w+)",names:\{en:"([^"]+)"/g)) {
+    effects[String(Number(m[1]))] = { format: m[2], name: m[3] };
+  }
+  return effects;
+}
+
 // ---------- level curves ----------
 
 // How a node's cost grows level by level depends only on its level count.
@@ -343,6 +383,10 @@ const lastzgg = Object.fromEntries(
 const gamides = Object.fromEntries(
   TREES.filter((t) => t.gamides).map((t) => [t.gamides, parseGamides(read(`gamides-${t.gamides}.html`))])
 );
+const wildhoggs = Object.fromEntries(
+  TREES.filter((t) => t.wildhoggs).map((t) => [t.wildhoggs, parseWildHoggs(read(`wildhoggs-${t.wildhoggs}.html`))])
+);
+const wildhoggsEffects = parseWildHoggsEffects(read("wildhoggs-calculator.js"));
 
 // Raw node: { key, name, maxLevel, parents:[key], lab, x, cost:{res:[..]}, effects, power, source }
 const effectsFromZtools = (stats) => stats.map((s) => (s.format === "text"
@@ -377,6 +421,33 @@ function lastzggNodes(calc, layout) {
     effects: n.bonusType ? [{ label: normLabel(n.bonusType), unit: "%", values: n.bonusPerLevel }] : [],
     power: n.powerPerLevel?.length === n.maxLevels ? n.powerPerLevel : null,
     source: "lastzgg",
+  }));
+}
+
+// wild-hoggs.com technologies -> nodes. Links carry the level they need, and
+// timers are the game's (seconds per level, stored as minutes).
+function wildhoggsNodes(key) {
+  return wildhoggs[key].technologies.map((t) => ({
+    key: t.id,
+    name: t.name.replace(/Ⅰ/g, "I").replace(/Ⅱ/g, "II").replace(/Ⅲ/g, "III"),
+    maxLevel: t.maxLevel,
+    parents: t.prerequisites.map((p) => p.id),
+    parentLevels: Object.fromEntries(t.prerequisites.map((p) => [p.id, p.requiredLevel])),
+    lab: t.labLevel,
+    x: 0,
+    cost: { electricity: t.stromCosts, zents: t.zentCosts },
+    effects: t.bonuses.map((b) => {
+      const e = wildhoggsEffects[String(Number(b.effect))];
+      if (!e) throw new Error(`wild-hoggs ${key}.${t.id}: unknown effect ${b.effect}`);
+      return {
+        label: normLabel(e.name),
+        unit: e.format === "percent" ? "%" : "",
+        values: b.values ?? Array.from({ length: t.maxLevel }, (_, i) => b.perLevel * (i + 1)),
+      };
+    }),
+    power: t.combatPower,
+    time: t.times.map((seconds) => Math.round((seconds / 60) * 100) / 100),
+    source: "wildhoggs",
   }));
 }
 
@@ -449,6 +520,14 @@ for (const meta of TREES) {
   if (meta.fandom) {
     nodes = fandomNodes(meta.fandom);
     sources.add("fandom");
+  } else if (meta.wildhoggs) {
+    const tree = wildhoggs[meta.wildhoggs];
+    nodes = wildhoggsNodes(meta.wildhoggs);
+    sources.add("wildhoggs");
+    name ||= tree.name;
+    reqs = [`Laboratory Lv.${tree.start.lab}`];
+    if (tree.start.tree) reqs.push(`${WILDHOGGS_TREE_NAMES[tree.start.tree] || tree.start.tree} ${tree.start.percent}%`);
+    reqSource = "wildhoggs";
   } else if (meta.lastzgg && meta.id !== "unitSpecialTraining") {
     // lastz.gg has every level of the troop trees to the badge; ztools rounds some and skips others.
     const layout = meta.layoutFrom ? built.get(meta.layoutFrom).raw : meta.ztools ? ztoolsNodes(meta.ztools) : null;
@@ -723,6 +802,8 @@ for (const tree of built.values()) {
       ...(n.estPower ? { estPower: true } : {}),
       ...(n.estLinks ? { estLinks: true } : {}),
       ...(n.estLab ? { estLab: true } : {}),
+      ...(n.parentLevels ? { parentLevels: Object.fromEntries(Object.entries(n.parentLevels).map(([k, v]) => [keyToId.get(k), v])) } : {}),
+      ...(n.time ? { time: n.time } : {}),
     })),
   });
 
@@ -749,10 +830,13 @@ const lines = [
   "// GENERATED by scripts/build-research-data.mjs. Do not edit by hand:",
   "// run `npm run fetch-sources && npm run build-data` to rebuild it.",
   "//",
-  "// Research trees from lastz.fandom.com, ztools.co.uk, gamides.com and lastz.gg.",
-  "// Each tree's art is the game's Laboratory card artwork, copied into assets/trees/.",
+  "// Research trees from lastz.fandom.com, ztools.co.uk, gamides.com, lastz.gg and",
+  "// wild-hoggs.com. Each tree's art is the game's Laboratory card artwork, copied",
+  "// into assets/trees/.",
   "// Per node: cost per level for each resource, bonuses (total at each level),",
-  "// power (total at each level), parents (each must be maxed first), and the",
+  "// power (total at each level), parents, parentLevels (the level each parent",
+  "// needs, where the source gives it; otherwise each parent must be maxed), time",
+  "// (minutes per level, where the source gives the game's timers), and the",
   "// Laboratory level it needs when the source gives one. estCost lists levels",
   "// whose cost is estimated; estPower, estLinks and estLab flag the rest.",
   "",

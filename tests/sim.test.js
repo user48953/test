@@ -23,7 +23,7 @@ test("catalog has unique node ids and valid links", () => {
       const parent = catalog.byId.get(p.id);
       assert.ok(parent, `${n.id} -> ${p.id}`);
       assert.equal(parent.treeId, n.treeId);
-      assert.equal(p.level, parent.maxLevel, "a parent must be maxed");
+      assert.ok(Number.isInteger(p.level) && p.level >= 1 && p.level <= parent.maxLevel, `${n.id} needs ${p.id} at a real level`);
       assert.ok(parent.tier < n.tier, `${n.id} sits below ${p.id}`);
     }
   }
@@ -94,6 +94,36 @@ test("tree requirements follow the sources", () => {
   assert.deepEqual(req("shelterManager"), [{ id: "shelterBuilding", pct: 100 }]);
   assert.deepEqual(req("riderTraining"), [{ id: "field", pct: 100 }]);
   assert.equal(TREES.find((t) => t.id === "unitSpecialTraining").lab, 30);
+  assert.deepEqual(req("militaryStrategies"), [{ id: "eliteTroops", pct: 100 }]);
+  assert.deepEqual(req("rapidGrowth"), [{ id: "shelterManager", pct: 100 }]);
+  assert.equal(TREES.find((t) => t.id === "rapidGrowth").lab, 22);
+  assert.deepEqual(UNPUBLISHED, []);
+});
+
+test("Elite Troops and Rapid Growth match wild-hoggs.com", () => {
+  const total = (id, r) => catalog.nodes.filter((n) => n.treeId === id)
+    .reduce((s, n) => s + Array.from({ length: n.maxLevel }, (_, i) => n.cost(i + 1)[r]).reduce((a, b) => a + b, 0), 0);
+  assert.equal(total("eliteTroops", "electricity"), 260_000_120);
+  assert.equal(total("eliteTroops", "zents"), 192_000_070);
+  assert.equal(total("rapidGrowth", "electricity"), 2_400_000_130);
+  assert.equal(total("rapidGrowth", "zents"), 720_000_180);
+  assert.equal(catalog.nodes.filter((n) => n.treeId === "eliteTroops").length, 21);
+  assert.equal(catalog.nodes.filter((n) => n.treeId === "rapidGrowth").length, 16);
+
+  // Links need the level the game asks for, not always the parent's max.
+  const fireUp = node("eliteTroops", "Fire Up");
+  const quick = node("eliteTroops", "Quick Assembly");
+  assert.deepEqual(quick.prereqs, [{ id: fireUp.id, level: 1 }]);
+  assert.equal(blocker(catalog, quick, {}, 8), "Fire Up Lv 1");
+  assert.equal(blocker(catalog, quick, { [fireUp.id]: 1 }, 8), null);
+  const crew = node("eliteTroops", "Demolition Crew");
+  assert.deepEqual(crew.prereqs.map((p) => p.level), [10, 10, 10]);
+
+  // The game's own timers, not the estimate.
+  assert.ok(!fireUp.estTime);
+  assert.equal(fireUp.time(1), 353.97);
+  assert.ok(node("newHome", "Stacking Technique").estTime);
+  assert.deepEqual(node("rapidGrowth", "Hospital Expansion").effects[0].values.at(-1), 800);
 });
 
 // ---------- the engine ----------

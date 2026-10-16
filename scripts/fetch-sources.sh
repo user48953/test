@@ -1,5 +1,5 @@
 #!/bin/sh
-# Downloads the four research sources into sources/raw/ (or the folder given as
+# Downloads the five research sources into sources/raw/ (or the folder given as
 # the first argument). Run `npm run build-data` afterwards to rebuild
 # src/research-data.js from them.
 set -eu
@@ -26,6 +26,15 @@ for t in new-home shelter-building hq-management hero-training alliance-recognit
   rider-training unit-special-training elite-troops rapid-growth; do
   get "art/$t.webp" "https://ztools.co.uk/icons/research/$t.webp"
 done
+
+# wild-hoggs.com: Elite Troops and Rapid Growth, which the other sites don't
+# list. Each calculator page embeds its tree as component props; effect names
+# live in the calculator's script, named on the page.
+for t in elite_troops rapid_growth; do
+  get "wildhoggs-$t.html" "https://wild-hoggs.com/tools/research/$t/"
+done
+calc=$(grep -o '/_astro/ResearchCategoryCalculator\.[A-Za-z0-9_-]*\.js' "$OUT/wildhoggs-elite_troops.html" | head -n 1)
+get wildhoggs-calculator.js "https://wild-hoggs.com$calc"
 
 # gamides.com: one page per badge tree.
 for t in hero_training military_strategies alliance_recognition siege_to_seize peace_shield \

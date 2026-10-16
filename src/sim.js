@@ -35,7 +35,8 @@ export function buildCatalog(trees, timer = TIMER) {
         estLinks: Boolean(src.estLinks),
         estLab: Boolean(src.estLab),
         labRequired: src.lab ?? tree.lab ?? 1,
-        prereqs: src.parents.map((p) => ({ id: `${tree.id}.${p}`, level: 0 })),
+        // Level each parent needs: given by some sources, otherwise maxed (below).
+        prereqs: src.parents.map((p) => ({ id: `${tree.id}.${p}`, level: src.parentLevels?.[p] ?? 0 })),
         // Filled in below: nodes that list this one as a prerequisite.
         unlocks: [],
         cost(level) {
@@ -46,8 +47,11 @@ export function buildCatalog(trees, timer = TIMER) {
         // Power added by one level, and the total at a level.
         powerGain: gain,
         powerAt: (level) => (level > 0 ? src.power[level - 1] : 0),
-        // Not published by any source: estimated from the power a level adds.
+        // The game's timer where a source publishes it; otherwise estimated
+        // from the power a level adds.
+        estTime: !src.time,
         time(level) {
+          if (src.time) return src.time[level - 1];
           return Math.max(timer.minMinutes, timer.minutesPerPower * gain(level));
         },
       };
@@ -58,7 +62,7 @@ export function buildCatalog(trees, timer = TIMER) {
   for (const node of nodes) {
     for (const p of node.prereqs) {
       const parent = byId.get(p.id);
-      p.level = parent.maxLevel;
+      p.level ||= parent.maxLevel;
       parent.unlocks.push({ id: node.id, level: p.level });
     }
   }

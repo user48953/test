@@ -4,8 +4,8 @@ A browser app that simulates how a Last Z: Survival Shooter account works throug
 the Laboratory research trees. Start from zero and choose every upgrade yourself,
 or let the auto plan choose for you.
 
-The trees are built from four community sources (see [Where the data comes
-from](#where-the-data-comes-from)): 15 trees, 285 research, 2,410 levels, with
+The trees are built from five community sources (see [Where the data comes
+from](#where-the-data-comes-from)): 17 trees, 322 research, 2,710 levels, with
 their real names, links, level counts, costs, bonuses and power.
 
 **Start from zero** (the first tab) has two rule sets:
@@ -111,6 +111,7 @@ limits, time skips, speedups, saving) behaves correctly.
 | [ztools.co.uk](https://ztools.co.uk/tools/research/) | The badge trees: research, links, badge cost per level, bonuses, power, and each tree's unlock rule; the game's Laboratory card art for every tree (`assets/trees/`) |
 | [lastz.gg](https://lastz.gg/basics/technologies) | Shooter, Assaulter and Rider Training (exact costs, bonuses and power per level); a level-by-level check of Unit Special Training |
 | [gamides.com](https://gamides.com/research/) | Tree descriptions, and badge totals to cross-check ztools.co.uk |
+| [wild-hoggs.com](https://wild-hoggs.com/tools/research/) | Elite Troops and Rapid Growth, which the other sites don't list: research, links and the level each link needs, Laboratory levels, Electricity and Zents costs, bonuses, power and the game's research timers |
 
 Where the sources disagree, the one with level-by-level numbers wins, and the tree
 card says what the other one claims. Each tree card lists its sources and any
@@ -131,18 +132,19 @@ The sources leave some numbers out. These are estimated and marked ≈ in the ap
   from the same research in other badge trees; the amounts aren't published.
 - **Laboratory levels** for Assaulter and Rider Training research follow Shooter
   Training, which lastz.gg lays out the same way.
-- **Research timers**: no source publishes them. A level's timer is 0.08 minutes
-  per point of power it adds (`TIMER` in `src/data.js`).
+- **Research timers** for every tree except Elite Troops and Rapid Growth (whose
+  timers wild-hoggs.com publishes). A level's timer is 0.08 minutes per point of
+  power it adds (`TIMER` in `src/data.js`). Against the timers wild-hoggs.com
+  publishes, that runs about a third as long (median), so these are likely short.
 
-Elite Troops and Rapid Growth are in the game, but none of the sources lists their
-research, so they aren't simulated. Military Strategies needs Elite Troops finished;
-the app shows that requirement but treats it as met. "Join an Alliance" and "HQ Lv
-24" are treated as met too.
+Military Strategies needs Elite Troops finished, and Rapid Growth needs HQ
+Management finished and Laboratory Lv 22. "Join an Alliance" and "HQ Lv 24" are
+treated as met.
 
 ### Rebuild the data
 
 ```sh
-npm run fetch-sources   # downloads the four sources into sources/raw/
+npm run fetch-sources   # downloads the five sources into sources/raw/
 npm run build-data      # parses them into src/research-data.js and copies the tree art
 ```
 
@@ -153,12 +155,15 @@ before writing. `npm test` then checks the result.
 ## How the simulation works
 
 - **Trees and research** come from `src/research-data.js`. A research's next level
-  needs every research it links from at max level (the rule ztools.co.uk's tree
-  view uses), its Laboratory level, and its tree's unlock rule: a Laboratory level
+  needs every research it links from at the level the game asks for, its Laboratory
+  level, and its tree's unlock rule. wild-hoggs.com gives those levels for Elite
+  Troops and Rapid Growth (usually level 1: Quick Assembly opens once Fire Up is at
+  level 1); in the other trees each link must be maxed (the rule ztools.co.uk's tree
+  view uses). A tree's unlock rule is a Laboratory level
   and other trees researched to a percentage of their levels (for example, Alliance
   Recognition needs Laboratory Lv 10 and New Home at 50%).
-- **Costs** are per level: Electricity and Zents for New Home, Shelter Building and
-  HQ Management; Research Badges for the badge trees.
+- **Costs** are per level: Electricity and Zents for New Home, Shelter Building, HQ
+  Management, Elite Troops and Rapid Growth; Research Badges for the badge trees.
 - **Research speed** is your base bonus plus every Research Speed bonus researched so
   far (Advanced Mathematics and Parallel Work). A timer is
   `base time / (1 + speed%)`, then alliance helps and daily speedups shorten it.
@@ -172,13 +177,13 @@ before writing. `npm test` then checks the result.
 | File | Purpose |
 |---|---|
 | `index.html` | Page layout and styles |
-| `src/research-data.js` | The research trees, generated from the four sources (don't edit by hand) |
+| `src/research-data.js` | The research trees, generated from the five sources (don't edit by hand) |
 | `assets/trees/` | Each tree's in-game Laboratory card art, copied from ztools.co.uk by the build |
 | `src/data.js` | Timer estimate and default settings |
 | `src/sim.js` | Engine: the `Lab` game state and the `simulate()` auto plan (no DOM) |
 | `src/vault.js` | Account password encryption (Web Crypto) |
 | `src/app.js` | UI: settings, free planning, real-time play, auto plan, chart, tree map, research details |
-| `scripts/fetch-sources.sh` | Downloads the four sources into `sources/raw/` |
+| `scripts/fetch-sources.sh` | Downloads the five sources into `sources/raw/` |
 | `scripts/build-research-data.mjs` | Builds `src/research-data.js` from them |
 | `tests/sim.test.js` | Data and simulator tests (`node --test`) |
 | `tests/vault.test.js` | Encryption tests |

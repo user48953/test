@@ -220,9 +220,15 @@ function loadConfig(saved = readPlain(localKey(STORAGE_KEY))) {
       if (typeof config[key] === "object" && !Array.isArray(config[key])) Object.assign(config[key], saved[key]);
       else config[key] = saved[key];
     }
-    // Keep the priority list in sync with the tree list.
-    const known = config.priority.filter((id) => treeById.has(id));
-    config.priority = [...new Set([...known, ...TREES.map((t) => t.id)])];
+    // Keep the priority list in sync with the tree list. A tree added since the
+    // save goes in after the tree before it in the default order.
+    const known = [...new Set(config.priority.filter((id) => treeById.has(id)))];
+    TREES.forEach((t, i) => {
+      if (known.includes(t.id)) return;
+      const prev = TREES.slice(0, i).reverse().find((p) => known.includes(p.id));
+      known.splice(prev ? known.indexOf(prev.id) + 1 : 0, 0, t.id);
+    });
+    config.priority = known;
   }
   return config;
 }
@@ -1180,7 +1186,7 @@ function renderTreeMap(container, view, mode) {
       }
       return card;
     }),
-    unpublishedCard()
+    ...(UNPUBLISHED.length ? [unpublishedCard()] : [])
   );
 }
 
@@ -1188,7 +1194,7 @@ function renderTreeMap(container, view, mode) {
 function unpublishedCard() {
   return el("div", { class: "tree tree-missing" },
     el("div", { class: "tree-head" }, el("h3", {}, "Not listed")),
-    el("p", { class: "tree-desc" }, "These trees are in the game, but none of the four sources lists their research, so they aren't simulated."),
+    el("p", { class: "tree-desc" }, "These trees are in the game, but none of the sources lists their research, so they aren't simulated."),
     el("ul", { class: "missing-list" }, ...UNPUBLISHED.map((u) =>
       el("li", {}, treeArt(u, "missing-art"), el("span", {}, el("b", {}, u.name), ` ${u.note}`)))));
 }
@@ -1633,7 +1639,7 @@ function planUp(nodeId) {
 }
 
 // Every research in a tree to its top level, in tree order (a research only
-// goes up once the research it links from is maxed), raising the Laboratory
+// goes up once the research it links from is high enough), raising the Laboratory
 // to what the tree needs, within the Laboratory's max level.
 function planMaxTree(treeId) {
   const tree = treeById.get(treeId);
@@ -1648,9 +1654,9 @@ function planMaxTree(treeId) {
     let skipped = 0;
     for (const n of nodes) {
       const lvl = plan.levels[n.id] || 0;
-      const parentsMaxed = n.prereqs.every((p) => (plan.levels[p.id] || 0) >= p.level);
+      const parentsDone = n.prereqs.every((p) => (plan.levels[p.id] || 0) >= p.level);
       if (lvl >= n.maxLevel) continue;
-      if (n.labRequired > lab || !parentsMaxed) {
+      if (n.labRequired > lab || !parentsDone) {
         skipped++;
         continue;
       }
@@ -1927,7 +1933,7 @@ function renderDetail() {
           el("tbody", {}, ...resRows,
             el("tr", { class: "timer-row" },
               el("td", {}, el("span", { class: "res-label" }, icon("clock"), "Research time")),
-              el("td", { class: "num" }, estMark(true, "Estimate: no source publishes research timers"), el("b", {}, formatDuration(researchDuration(node.time(L), view.speed)))),
+              el("td", { class: "num" }, estMark(node.estTime, "Estimate: the sources don't publish this research's timers"), el("b", {}, formatDuration(researchDuration(node.time(L), view.speed)))),
               el("td", { class: "num muted", colspan: showStock ? 2 : 1 }, `at +${view.speed.toFixed(1)}% speed, before helps`))))),
       est ? el("p", { class: "hint" }, `${EST} The sources don't publish this level's cost. It's estimated from the published levels and how costs grow level by level in the game.`) : null,
       rest
@@ -1984,7 +1990,7 @@ function renderDetail() {
     node.estPower ? "Power is estimated from badge cost." : null,
     node.estLinks ? "Links between research in this tree are estimated." : null,
     node.effects.some((e) => !e.values && e.text === undefined) ? "The source doesn't publish this bonus's amounts." : null,
-    "Timers are estimates: no source publishes them.",
+    node.estTime ? "Timers are estimates: the sources don't publish them for this tree." : "Timers are the game's.",
   ].filter(Boolean);
 
   $("#detail-body").replaceChildren(
@@ -2026,7 +2032,7 @@ function renderDetail() {
       : null,
     el("div", { class: "d-levels" },
       el("h3", {}, "Levels"),
-      el("p", { class: "hint" }, `Bonus and power are the totals at that level. Each level's resources are paid when it starts. ${EST} marks estimated costs. Timers are estimates at your current research speed (+${view.speed.toFixed(1)}%), before helps and speedups.`),
+      el("p", { class: "hint" }, `Bonus and power are the totals at that level. Each level's resources are paid when it starts. ${EST} marks estimated costs. ${node.estTime ? "Timers are estimates" : "Timers are"} at your current research speed (+${view.speed.toFixed(1)}%), before helps and speedups.`),
       el("div", { class: "table-scroll" },
         el("table", { class: "d-table" },
           el("thead", {}, el("tr", {},
