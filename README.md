@@ -11,8 +11,10 @@ their real names, links, level counts, costs, bonuses and power.
 **Start from zero** (the first tab) has two rule sets:
 
 - **Free planning** (default): everything starts at level 0. Tap **+** on any
-  research to upgrade it instantly, raise or lower your Laboratory level, and
-  remove levels from a research's detail view. Prerequisites and Laboratory
+  research to upgrade it instantly, or **Max tree** to take every research in a
+  tree to its top level in one click (it raises the Laboratory to what the tree
+  needs, and waits until any tree it depends on is far enough along). Raise or
+  lower your Laboratory level, and remove levels from a research's detail view. Prerequisites and Laboratory
   requirements still apply, so a removal that would break something you built
   is blocked with the reason. The page keeps a running total of resources
   spent, research time, power and every bonus you've earned.
@@ -44,6 +46,10 @@ out) they save in the browser only. People you share the page with need
 Contributor access to save their own; Viewers and Commenters save in their
 browser only. Long games are stored compactly (a fully researched game is about
 128 KB of the 256 KB each record allows).
+
+Research trees start collapsed to one line each: art, progress, and where the tree
+stands (finished, how many research are ready, or what it needs). Tap a tree to
+open it full width; the trees you leave open stay open.
 
 **Auto plan** runs the whole schedule at once and shows:
 

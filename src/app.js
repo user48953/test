@@ -23,6 +23,7 @@ const ICONS = {
   clock: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="4.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 3.5V6l1.8 1.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
   cross: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   bolt: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7 1L2.5 7H6l-1 4 4.5-6H6z" fill="currentColor"/></svg>',
+  chevron: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 };
 
 // Resource glyphs: lightning bolt, coin, medal.
@@ -1053,7 +1054,32 @@ function treeArt(tree, cls) {
     : null;
 }
 
-// view: { levels, labLevel, progress, complete, state(node) -> { cls, label, note } }
+// Trees start collapsed; the ones a viewer opens stay open (per browser).
+const OPEN_KEY = "lastz-research-sim:open-trees";
+const openTrees = new Set([readStorage(OPEN_KEY)].flat().filter((id) => treeById.has(id)));
+
+function toggleTree(treeId, toggleId) {
+  if (openTrees.has(treeId)) openTrees.delete(treeId);
+  else openTrees.add(treeId);
+  writeStorage(OPEN_KEY, [...openTrees]);
+  if (activeTab === "play") renderPlay();
+  else renderDay();
+  document.getElementById(toggleId)?.focus();
+}
+
+// One line on where a tree stands, for its collapsed card.
+function treeStatus(done, treeLock, states) {
+  if (done) return chip("done", "check", "Finished");
+  if (treeLock) return chip("locked", "lock", `Needs ${treeLock}`);
+  const count = (cls) => [...states.values()].filter((s) => s.cls === cls).length;
+  if (count("busy")) return chip("active", "clock", `${count("busy")} researching`);
+  if (count("ready")) return chip("active", null, `${count("ready")} ready`);
+  if (count("short")) return chip("short", "cross", `${count("short")} short on resources`);
+  const why = [...states.values()].find((s) => s.cls === "locked" && s.note)?.note;
+  return chip("locked", "lock", why ? `Needs ${why}` : "Waiting");
+}
+
+// view: { levels, labLevel, progress, complete, state(node) -> { cls, label, note }, treeAction?(tree) }
 function renderTreeMap(container, view, mode) {
   container.replaceChildren(
     ...config.priority.map((id) => treeById.get(id)).map((tree) => {
@@ -1062,6 +1088,36 @@ function renderTreeMap(container, view, mode) {
       const max = nodes.reduce((s, n) => s + n.maxLevel, 0);
       const started = nodes.some((n) => view.levels[n.id] || view.busy.has(n.id));
       const treeLock = started ? null : treeGate(tree, view) || null;
+      const states = new Map(nodes.map((n) => [n.id, view.state(n)]));
+      const done = view.complete.get(tree.id);
+      const open = openTrees.has(tree.id);
+      const toggleId = `${container.id}-toggle-${tree.id}`;
+      const bodyId = `${container.id}-body-${tree.id}`;
+      const act = view.treeAction?.(tree);
+
+      const card = el("div", { class: `tree${done ? " is-done" : ""}${open ? " is-open" : ""}` },
+        el("h3", { class: "tree-h" },
+          el("button", {
+            type: "button",
+            class: "tree-toggle",
+            id: toggleId,
+            "aria-expanded": String(open),
+            "aria-controls": bodyId,
+            onclick: () => toggleTree(tree.id, toggleId),
+          },
+            treeArt(tree, "tree-art"),
+            el("span", { class: "tree-title" },
+              el("span", { class: "tree-name" }, tree.name),
+              el("span", { class: "num tree-count" }, `${got}/${max}`),
+              el("span", { class: `meter${got === max ? " done" : ""}` }, el("i", { style: `width:${(got / max) * 100}%` }))),
+            el("span", { class: "tree-chev" }, icon("chevron")))),
+        el("div", { class: "tree-sum" },
+          treeStatus(done, treeLock, states),
+          act ? el("button", { type: "button", class: "btn small", disabled: act.disabled, title: act.title, "aria-label": act.label, onclick: act.run }, act.text) : null));
+      if (!open) {
+        card.append(el("div", { id: bodyId, hidden: true }));
+        return card;
+      }
 
       // Resources still needed to finish the tree (levels already paid for excluded).
       const left = emptyCost();
@@ -1072,38 +1128,31 @@ function renderTreeMap(container, view, mode) {
         for (const k of RESOURCES) left[k] += r.cost[k];
         leftEst ||= r.est;
       }
-      const done = view.complete.get(tree.id);
       const notes = [...tree.conditions.map((c) => `Also needs ${c}.`), ...tree.notes];
 
-      const card = el("div", { class: `tree${done ? " is-done" : ""}` },
-        el("div", { class: "tree-top" },
-          treeArt(tree, "tree-art"),
-          el("div", { class: "tree-top-text" },
-            el("div", { class: "tree-head" },
-              el("h3", {}, tree.name),
-              el("span", { class: "num" }, `${got}/${max}`)),
-            el("p", { class: "tree-desc" }, tree.description))),
+      const body = el("div", { class: "tree-body", id: bodyId },
+        el("p", { class: "tree-desc" }, tree.description),
         sourceLine(tree),
         notes.length
           ? el("details", { class: "tree-notes" }, el("summary", {}, notes.length === 1 ? "1 note on this data" : `${notes.length} notes on this data`),
             el("ul", {}, ...notes.map((n) => el("li", {}, n))))
           : null,
-        done ? null : el("p", { class: "tree-left" }, el("span", { class: "eyebrow" }, "Left to finish"), costList(left, null, leftEst)),
-        treeLock ? el("p", { class: "tree-lock" }, icon("lock"), `Needs ${treeLock}`) : null);
+        done ? null : el("p", { class: "tree-left" }, el("span", { class: "eyebrow" }, "Left to finish"), costList(left, null, leftEst)));
+      card.append(body);
 
       const rows = Math.max(...nodes.map((n) => n.tier)) + 1;
       for (let t = 0; t < rows; t++) {
         const row = el("div", { class: "tier" });
         for (const node of nodes.filter((n) => n.tier === t)) {
           const lvl = view.levels[node.id] || 0;
-          const st = view.state(node);
+          const st = states.get(node.id);
           // Next level's cost, unless maxed or already paid (researching now).
           const next = lvl < node.maxLevel && !view.busy.has(node.id) ? node.cost(lvl + 1) : null;
           const nextEst = next ? isEstCost(node, lvl + 1) : false;
           const costLabel = next ? ` Level ${lvl + 1} costs ${nextEst ? "about " : ""}${costText(next)}.` : "";
           // One-tap upgrade, offered only when this research can go up right now.
-          const act = view.action?.(node, st);
-          row.append(el("div", { class: `node ${st.cls}${act ? " has-up" : ""}` },
+          const up = view.action?.(node, st);
+          row.append(el("div", { class: `node ${st.cls}${up ? " has-up" : ""}` },
             el("button", {
               type: "button",
               class: "node-main",
@@ -1117,9 +1166,9 @@ function renderTreeMap(container, view, mode) {
               el("span", { class: "meter" }, el("i", { style: `width:${(lvl / node.maxLevel) * 100}%` })),
               next ? el("span", { class: "n-cost" }, costList(next, mode === "play" ? view.stock : null, nextEst)) : null,
               st.note && !treeLock ? el("span", { class: "n-why" }, st.note) : null),
-            act ? el("button", { type: "button", class: "node-up", "aria-label": act.label, title: act.label, onclick: act.run }, "+") : null));
+            up ? el("button", { type: "button", class: "node-up", "aria-label": up.label, title: up.label, onclick: up.run }, "+") : null));
         }
-        card.append(row);
+        body.append(row);
       }
       return card;
     }),
@@ -1501,6 +1550,20 @@ function planView() {
       if (st.cls !== "ready") return null;
       return { label: `Upgrade ${node.name} to level ${(plan.levels[node.id] || 0) + 1}`, run: () => planUp(node.id) };
     },
+    // Max every research in a tree at once (free planning only).
+    treeAction(tree) {
+      const left = nodesOf(tree.id).reduce((s, n) => s + n.maxLevel - (plan.levels[n.id] || 0), 0);
+      if (!left) return null;
+      const missing = tree.requires.filter((r) => !meetsPct(progress.get(r.id), r.pct));
+      const why = missing.length ? `Needs ${missing.map((r) => treeRequirementText(catalog, r)).join(", ")} first` : "";
+      return {
+        text: "Max tree",
+        label: `Max every research in ${tree.name}`,
+        title: why || `Add the ${left} levels left, raising the Laboratory if needed`,
+        disabled: Boolean(why),
+        run: () => planMaxTree(tree.id),
+      };
+    },
   };
 }
 
@@ -1547,6 +1610,45 @@ function planUp(nodeId) {
       .map((u) => catalog.byId.get(u.id))
       .filter((n) => !plan.levels[n.id] && !blocker(catalog, n, plan.levels, plan.labLevel));
     return `${node.name} is now Lv ${lvl + 1}.${unlocked.length ? ` Unlocked: ${unlocked.map((n) => n.name).join(", ")}.` : ""}`;
+  });
+}
+
+// Every research in a tree to its top level, in tree order (a research only
+// goes up once the research it links from is maxed), raising the Laboratory
+// to what the tree needs, within the Laboratory's max level.
+function planMaxTree(treeId) {
+  const tree = treeById.get(treeId);
+  const before = progressMap(catalog, plan.levels);
+  if (tree.requires.some((r) => !meetsPct(before.get(r.id), r.pct))) return;
+  planChange(() => {
+    const nodes = [...nodesOf(treeId)].sort((a, b) => a.tier - b.tier);
+    const startLab = plan.labLevel;
+    const lab = Math.min(config.labMaxLevel, Math.max(startLab, ...nodes.map((n) => n.labRequired)));
+    plan.labLevel = lab;
+    let added = 0;
+    let skipped = 0;
+    for (const n of nodes) {
+      const lvl = plan.levels[n.id] || 0;
+      const parentsMaxed = n.prereqs.every((p) => (plan.levels[p.id] || 0) >= p.level);
+      if (lvl >= n.maxLevel) continue;
+      if (n.labRequired > lab || !parentsMaxed) {
+        skipped++;
+        continue;
+      }
+      added += n.maxLevel - lvl;
+      plan.levels[n.id] = n.maxLevel;
+    }
+    // Don't raise the Laboratory for nothing.
+    if (!added) plan.labLevel = startLab;
+    const after = progressMap(catalog, plan.levels);
+    const meets = (t, p) => t.requires.every((r) => meetsPct(p.get(r.id), r.pct));
+    const opened = TREES.filter((t) => t.requires.length && meets(t, after) && !meets(t, before));
+    return [
+      `Maxed ${tree.name}: ${added} level${added === 1 ? "" : "s"} added.`,
+      plan.labLevel > startLab ? `Laboratory raised to Lv ${plan.labLevel}.` : "",
+      skipped ? `${skipped} research need a Laboratory above your max (Lv ${config.labMaxLevel}).` : "",
+      opened.length ? `Opens ${opened.map((t) => t.name).join(", ")}.` : "",
+    ].filter(Boolean).join(" ");
   });
 }
 
