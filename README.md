@@ -13,8 +13,10 @@ their real names, links, level counts, costs, bonuses and power.
 - **Free planning** (default): everything starts at level 0. Tap **+** on any
   research to upgrade it instantly, or **Max tree** to take every research in a
   tree to its top level in one click (it raises the Laboratory to what the tree
-  needs, and waits until any tree it depends on is far enough along). Raise or
-  lower your Laboratory level, and remove levels from a research's detail view. Prerequisites and Laboratory
+  needs, and waits until any tree it depends on is far enough along). Once a tree
+  is finished, the button becomes **Reset tree** (click twice) and sets it back to
+  level 0, unless a tree you've started needs it. Raise or lower your Laboratory
+  level, and remove levels from a research's detail view. Prerequisites and Laboratory
   requirements still apply, so a removal that would break something you built
   is blocked with the reason. The page keeps a running total of resources
   spent, research time, power and every bonus you've earned.

@@ -1113,7 +1113,15 @@ function renderTreeMap(container, view, mode) {
             el("span", { class: "tree-chev" }, icon("chevron")))),
         el("div", { class: "tree-sum" },
           treeStatus(done, treeLock, states),
-          act ? el("button", { type: "button", class: "btn small", disabled: act.disabled, title: act.title, "aria-label": act.label, onclick: act.run }, act.text) : null));
+          act ? el("button", {
+            type: "button",
+            id: `${container.id}-act-${tree.id}`,
+            class: `btn small${act.danger ? " danger" : ""}`,
+            disabled: act.disabled,
+            title: act.title,
+            "aria-label": act.label,
+            onclick: act.run,
+          }, act.text) : null));
       if (!open) {
         card.append(el("div", { id: bodyId, hidden: true }));
         return card;
@@ -1550,10 +1558,21 @@ function planView() {
       if (st.cls !== "ready") return null;
       return { label: `Upgrade ${node.name} to level ${(plan.levels[node.id] || 0) + 1}`, run: () => planUp(node.id) };
     },
-    // Max every research in a tree at once (free planning only).
+    // Max every research in a tree at once, or reset a finished one (free planning only).
     treeAction(tree) {
       const left = nodesOf(tree.id).reduce((s, n) => s + n.maxLevel - (plan.levels[n.id] || 0), 0);
-      if (!left) return null;
+      if (!left) {
+        const why = resetTreeBlocker(tree);
+        const armed = resetArmed === tree.id;
+        return {
+          text: armed ? "Click again to reset" : "Reset tree",
+          label: armed ? `Confirm: set every research in ${tree.name} back to level 0` : `Reset ${tree.name} to level 0`,
+          title: why || "Set every research in this tree back to level 0",
+          disabled: Boolean(why),
+          danger: armed,
+          run: () => planResetTree(tree.id),
+        };
+      }
       const missing = tree.requires.filter((r) => !meetsPct(progress.get(r.id), r.pct));
       const why = missing.length ? `Needs ${missing.map((r) => treeRequirementText(catalog, r)).join(", ")} first` : "";
       return {
@@ -1650,6 +1669,47 @@ function planMaxTree(treeId) {
       opened.length ? `Opens ${opened.map((t) => t.name).join(", ")}.` : "",
     ].filter(Boolean).join(" ");
   });
+}
+
+// Why a finished tree can't be reset: a tree you've started needs it.
+function resetTreeBlocker(tree) {
+  for (const other of TREES) {
+    const req = other.requires.find((r) => r.id === tree.id);
+    if (req && nodesOf(other.id).some((n) => plan.levels[n.id])) {
+      return `Reset ${other.name} first: it needs ${treeRequirementText(catalog, req)}`;
+    }
+  }
+  return "";
+}
+
+// Two clicks: the first arms the button, the second resets the tree.
+let resetArmed = null;
+let resetTimer = null;
+function planResetTree(treeId) {
+  const tree = treeById.get(treeId);
+  const buttonId = `p-map-act-${treeId}`;
+  clearTimeout(resetTimer);
+  if (resetTreeBlocker(tree)) return;
+  if (resetArmed !== treeId) {
+    resetArmed = treeId;
+    renderPlay();
+    document.getElementById(buttonId)?.focus();
+    resetTimer = setTimeout(() => {
+      resetArmed = null;
+      renderPlay();
+    }, 4000);
+    return;
+  }
+  resetArmed = null;
+  planChange(() => {
+    let removed = 0;
+    for (const n of nodesOf(treeId)) {
+      removed += plan.levels[n.id] || 0;
+      delete plan.levels[n.id];
+    }
+    return `Reset ${tree.name}: ${removed} level${removed === 1 ? "" : "s"} removed. The Laboratory stays at Lv ${plan.labLevel}.`;
+  });
+  document.getElementById(buttonId)?.focus();
 }
 
 function planDown(nodeId) {
