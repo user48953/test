@@ -2,7 +2,7 @@
 // Builds src/research-data.js from the four research sources saved by
 // scripts/fetch-sources.sh:
 //
-//   lastz.fandom.com  New Home, Shelter Building and Shelter Manager (Electricity + Zents)
+//   lastz.fandom.com  New Home, Shelter Building and HQ Management (Electricity + Zents)
 //   ztools.co.uk      the badge trees: links, per-level badge costs, bonuses, power, unlock rules
 //   lastz.gg          exact Shooter, Assaulter and Rider Training data; checks Unit Special Training
 //   gamides.com       tree descriptions; badge totals to cross-check ztools
@@ -39,12 +39,14 @@ const TREES = [
   },
   {
     id: "shelterBuilding", name: "Shelter Building", currency: "resources", fandom: "Shelter Building",
-    description: "Production, storage and gathering for food, wood, Zents and Electricity, plus construction and research speed. Finishing it opens Shelter Manager.",
+    description: "Production, storage and gathering for food, wood, Zents and Electricity, plus construction and research speed. Finishing it opens HQ Management.",
   },
   {
-    id: "shelterManager", name: "Shelter Manager", currency: "resources", fandom: "Shelter Manager",
+    // HQ Management is the in-game name; the fandom wiki lists it as "Shelter
+    // Manager". The id keeps the wiki's name so saved progress still matches.
+    id: "shelterManager", name: "HQ Management", currency: "resources", fandom: "Shelter Manager",
     reqs: ["Shelter Building 100%"], reqSource: "fandom",
-    description: "Opens once Shelter Building is maxed: bigger production, storage, protection and gathering bonuses, healing speed and hospital space. lastz.gg calls this tree HQ Management.",
+    description: "Opens once Shelter Building is maxed: bigger production, storage, protection and gathering bonuses, healing speed and hospital space. The fandom wiki lists it as Shelter Manager.",
   },
   { id: "heroTraining", ztools: "hero-training", gamides: "hero_training" },
   { id: "allianceRecognition", ztools: "alliance-recognition", gamides: "alliance_recognition" },
@@ -72,7 +74,7 @@ const TREES = [
 ];
 
 // ztools.co.uk's file name for each tree's artwork (the game's own Laboratory
-// card art). Shelter Manager is the tree ztools and lastz.gg call HQ Management.
+// card art).
 const ART = {
   newHome: "new-home",
   shelterBuilding: "shelter-building",
@@ -536,7 +538,7 @@ for (const tree of built.values()) {
   const res = meta.currency === "resources" ? ["electricity", "zents"] : ["badges"];
   const round = meta.currency === "resources" ? sig3 : (x) => Math.max(10, roundTo(x, 10));
 
-  // Shelter Manager: fandom gives effects and power but almost no costs, no
+  // HQ Management: fandom gives effects and power but almost no costs, no
   // links and no Laboratory levels. Rows follow the power each node gives
   // (nodes in a row cost the same where costs are published), each row needs
   // the row before it, and missing first-level costs follow the

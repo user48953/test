@@ -8,7 +8,7 @@
 // Laboratory level it needs when the source gives one. estCost lists levels
 // whose cost is estimated; estPower, estLinks and estLab flag the rest.
 
-export const BUILT = "2026-10-14";
+export const BUILT = "2026-10-16";
 
 export const SITES = [
   {
@@ -118,7 +118,7 @@ export const TREES = [
     "id": "shelterBuilding",
     "name": "Shelter Building",
     "currency": "resources",
-    "description": "Production, storage and gathering for food, wood, Zents and Electricity, plus construction and research speed. Finishing it opens Shelter Manager.",
+    "description": "Production, storage and gathering for food, wood, Zents and Electricity, plus construction and research speed. Finishing it opens HQ Management.",
     "art": "assets/trees/shelterBuilding.webp",
     "sources": [
       "lastz.fandom.com"
@@ -150,9 +150,9 @@ export const TREES = [
   },
   {
     "id": "shelterManager",
-    "name": "Shelter Manager",
+    "name": "HQ Management",
     "currency": "resources",
-    "description": "Opens once Shelter Building is maxed: bigger production, storage, protection and gathering bonuses, healing speed and hospital space. lastz.gg calls this tree HQ Management.",
+    "description": "Opens once Shelter Building is maxed: bigger production, storage, protection and gathering bonuses, healing speed and hospital space. The fandom wiki lists it as Shelter Manager.",
     "art": "assets/trees/shelterManager.webp",
     "sources": [
       "lastz.fandom.com"

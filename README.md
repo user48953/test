@@ -107,7 +107,7 @@ limits, time skips, speedups, saving) behaves correctly.
 
 | Source | Used for |
 |---|---|
-| [lastz.fandom.com](https://lastz.fandom.com/wiki/Technologies) | New Home, Shelter Building and Shelter Manager: research, links, Laboratory levels, Electricity and Zents costs, bonuses, power |
+| [lastz.fandom.com](https://lastz.fandom.com/wiki/Technologies) | New Home, Shelter Building and HQ Management (which the wiki calls Shelter Manager): research, links, Laboratory levels, Electricity and Zents costs, bonuses, power |
 | [ztools.co.uk](https://ztools.co.uk/tools/research/) | The badge trees: research, links, badge cost per level, bonuses, power, and each tree's unlock rule; the game's Laboratory card art for every tree (`assets/trees/`) |
 | [lastz.gg](https://lastz.gg/basics/technologies) | Shooter, Assaulter and Rider Training (exact costs, bonuses and power per level); a level-by-level check of Unit Special Training |
 | [gamides.com](https://gamides.com/research/) | Tree descriptions, and badge totals to cross-check ztools.co.uk |
@@ -118,13 +118,13 @@ notes; each research's detail view names its source.
 
 The sources leave some numbers out. These are estimated and marked ≈ in the app:
 
-- **Costs** for levels a source skips (Shelter Building lists only level 1; Shelter
-  Manager lists a few levels; Army Building is missing 10 levels). In Last Z a
+- **Costs** for levels a source skips (Shelter Building lists only level 1; HQ
+  Management lists a few levels; Army Building is missing 10 levels). In Last Z a
   research's cost grows level by level along the same curve for every research with
   the same number of levels (for 10 levels: ×1, 1.2, 1.4, 1.7, 2.0, 2.5, 3.1, 3.9,
   4.9, 6.0). The curves are learned from every fully published badge research and
   scaled from the levels that are published.
-- **Shelter Manager's links**: fandom lists its research but not how they connect.
+- **HQ Management's links**: fandom lists its research but not how they connect.
   Rows follow the power each research gives, and each row needs the row before it.
 - **Power** for Field and Army Building, from each level's badge cost (fitted on the
   1,655 badge levels whose power is published, about ±16%). Their bonus names come
@@ -158,7 +158,7 @@ before writing. `npm test` then checks the result.
   and other trees researched to a percentage of their levels (for example, Alliance
   Recognition needs Laboratory Lv 10 and New Home at 50%).
 - **Costs** are per level: Electricity and Zents for New Home, Shelter Building and
-  Shelter Manager; Research Badges for the badge trees.
+  HQ Management; Research Badges for the badge trees.
 - **Research speed** is your base bonus plus every Research Speed bonus researched so
   far (Advanced Mathematics and Parallel Work). A timer is
   `base time / (1 + speed%)`, then alliance helps and daily speedups shorten it.
