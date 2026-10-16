@@ -94,3 +94,39 @@ to reshape the trees.
 | `src/sim.js` | Engine: the `Lab` game state and the `simulate()` auto plan (no DOM) |
 | `src/app.js` | UI: settings, free planning, real-time play, auto plan, chart, tree map, research details |
 | `tests/sim.test.js` | Simulator tests (`node --test`) |
+
+## Lemonade Tycoon
+
+A second game in this repo, in `lemonade/`: run a lemonade stand for a 30-day
+summer. Serve the folder as above and open http://localhost:8000/lemonade/.
+
+Each morning you:
+
+- check the forecast (it's usually right, give or take a few degrees)
+- pick where to set up: Maple Street is free; Riverside Park, Downtown and the
+  Boardwalk unlock as your reputation grows, and charge rent
+- set the recipe (lemons and sugar per pitcher, ice per cup) and the price
+- buy lemons, sugar, paper cups and ice. Lemon and sugar prices move day to day,
+  bigger packs are cheaper per unit, and ice melts overnight
+- choose today's advertising and buy upgrades (a sign, a cooler, an umbrella, a
+  lemon press, a helper, a neon sign)
+
+Then open the stand and watch the day play out on the street. Every customer
+either walks past, balks at the price, gives up on a long line, finds you sold
+out, or buys a cup and says what they think of it ("Too sour!", "Not cold
+enough"). Happy customers raise your reputation, which brings more people and
+lets you charge more. The day ends with a till receipt and a bar on the profit
+chart. After day 30 you get a rank based on your cash, and you can keep selling.
+
+The game saves in the browser. The engine (`lemonade/game.js`) has no DOM and is
+seeded per day, so the same choices on the same day always give the same result;
+`tests/lemonade.test.js` checks the books balance, stock never goes negative,
+higher prices sell fewer cups, reputation and unlocks work, upgrades do what
+they say, and a sensible player profits over a season.
+
+| File | Purpose |
+|---|---|
+| `lemonade/index.html` | Page layout and styles |
+| `lemonade/game.js` | Engine: supplies, weather, customers, reputation, the day simulation (no DOM) |
+| `lemonade/app.js` | UI: morning prep, the animated street scene, receipt and profit chart |
+| `tests/lemonade.test.js` | Engine tests (`node --test`) |
