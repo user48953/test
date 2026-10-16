@@ -125,7 +125,31 @@ button, input, select { font: inherit; color: inherit; }
   letter-spacing: 0.01em;
 }
 .top h1 span { color: var(--accent); }
-.top-side { display: grid; gap: 10px; justify-items: start; }
+.top-side { display: grid; gap: 10px; justify-items: start; min-width: 0; }
+.acct { display: grid; gap: 4px; min-width: 0; }
+.acct-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.acct select, .acct-body input {
+  min-width: 0;
+  max-width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 5px 8px;
+  font-weight: 600;
+}
+.acct select { max-width: 22ch; }
+.acct.is-busy select { opacity: 0.6; }
+.acct-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 20px; }
+@media (max-width: 560px) { .acct-body { padding: 16px; } }
+.acct-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.acct-item { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); }
+.acct-item.is-current { border-color: var(--accent); }
+.acct-item input { width: 100%; }
+.acct-form { display: grid; gap: 6px; }
+.acct-form label { font-size: var(--step--1); font-weight: 600; }
+.acct-form input { flex: 1 1 160px; }
+.btn.danger { border-color: var(--warn); color: var(--warn); }
+@media (max-width: 480px) { .acct-item { grid-template-columns: minmax(0, 1fr) auto; } .acct-item input { grid-column: 1 / -1; } }
 .save-status { display: inline-flex; align-items: center; gap: 7px; margin: 0; max-width: 42ch; font-family: var(--font-data); font-size: 0.75rem; color: var(--muted); }
 .save-status::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .save-status[data-state="saved"]::before { background: var(--good); }
@@ -573,7 +597,14 @@ footer p { max-width: 75ch; margin: 0; }
       <p class="lede">Plan or simulate how your Laboratory works through every research tree, with the research, costs and bonuses published by four Last Z community sites. Change your income, speedups and research order and see how many days each tree takes.</p>
     </div>
     <div class="top-side">
-      <div class="stamp">Timers estimated · tune to your account</div>
+      <div class="stamp">Timers estimated · tune in the settings</div>
+      <div class="acct" id="acct">
+        <label class="eyebrow" for="acct-select">Game account</label>
+        <div class="acct-row">
+          <select id="acct-select"></select>
+          <button type="button" class="btn small" id="acct-manage">Manage accounts</button>
+        </div>
+      </div>
       <p class="save-status" id="save-status" role="status" aria-live="polite" data-state="local">Saved in this browser</p>
     </div>
   </div>
@@ -740,6 +771,28 @@ footer p { max-width: 75ch; margin: 0; }
     <form id="settings" novalidate></form>
   </aside>
 </main>
+
+<dialog id="accounts" aria-labelledby="accounts-title">
+  <div class="acct-body">
+    <div class="d-head">
+      <div>
+        <div class="eyebrow">Game accounts</div>
+        <h2 id="accounts-title">Your Last Z accounts</h2>
+      </div>
+      <button type="button" class="icon-btn" id="accounts-close" aria-label="Close"><span class="ico"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></span></button>
+    </div>
+    <p class="hint">Each account keeps its own settings, free plan and real-time game, for a main and farm accounts, say. Edit a name to rename it.</p>
+    <ul class="acct-list" id="acct-list"></ul>
+    <form class="acct-form" id="acct-form" novalidate>
+      <label for="acct-new-name">New account</label>
+      <div class="acct-row">
+        <input type="text" id="acct-new-name" maxlength="40" placeholder="Farm 1" autocomplete="off">
+        <button type="submit" class="btn primary" id="acct-new">Create and open</button>
+      </div>
+    </form>
+    <p class="message" id="acct-message" role="status" aria-live="polite"></p>
+  </div>
+</dialog>
 
 <dialog id="detail" aria-labelledby="detail-title">
   <div id="detail-body"></div>

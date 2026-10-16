@@ -19,10 +19,17 @@ their real names, links, level counts, costs, bonuses and power.
 - **Real time**: a timed game. Tap **+** to start research, pay its resources,
   then skip time ahead and spend speedups (details below).
 
+**Game accounts**: keep a separate setup for each of your Last Z accounts (a main
+and farm accounts, say). Pick one from **Game account** at the top of the page, or
+use **Manage accounts** to create, rename, open or delete one (up to 20). Each
+account has its own settings, free plan and real-time game; a new one starts from
+zero with default settings. Switching saves the account you're leaving first.
+
 **Saving**: your settings, your free plan and your real-time game save as you go.
 On the published claude.ai page, signed in, they save to your own records for the
 page, which nobody else can read (not even the page's owner) and which follow you
-to any device; the header says "Saved to your account". Anywhere else (or signed
+to any device, along with your list of game accounts; the header says "Saved to
+your claude.ai account". Anywhere else (or signed
 out) they save in the browser only. People you share the page with need
 Contributor access to save their own; Viewers and Commenters save in their
 browser only. Long games are stored compactly (a fully researched game is about

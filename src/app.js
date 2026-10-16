@@ -162,7 +162,40 @@ function writeStorage(key, value) {
   }
 }
 
-function loadConfig(saved = readStorage(STORAGE_KEY)) {
+// ---------- game accounts ----------
+// A player can keep several Last Z accounts (a main and farm accounts, say),
+// each with its own settings, free plan and real-time game. The list and each
+// account's data live in this browser and, inside the claude.ai viewer, in
+// the player's own records too.
+
+const ACCOUNTS_KEY = "lastz-research-sim:accounts:v1";
+const MAX_ACCOUNTS = 20;
+const ACCOUNT_DATA = ["settings", "plan", "game"];
+
+function loadAccounts(saved = readStorage(ACCOUNTS_KEY)) {
+  const list = (Array.isArray(saved?.list) ? saved.list : [])
+    .filter((a) => typeof a?.id === "string" && /^[a-z0-9]{1,24}$/.test(a.id))
+    .slice(0, MAX_ACCOUNTS)
+    .map((a) => ({ id: a.id, name: cleanName(a.name) || "Account" }));
+  if (!list.length) list.push({ id: "main", name: "Main account" });
+  const active = list.some((a) => a.id === saved?.active) ? saved.active : list[0].id;
+  return { list, active };
+}
+
+function cleanName(name) {
+  return String(name ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+}
+
+let accounts = loadAccounts();
+const activeAccount = () => accounts.list.find((a) => a.id === accounts.active);
+
+// Browser keys: the first account keeps the keys saves had before accounts
+// existed, so nothing saved earlier is lost.
+function localKey(base, id = accounts.active) {
+  return id === "main" ? base : `${base}:${id}`;
+}
+
+function loadConfig(saved = readStorage(localKey(STORAGE_KEY))) {
   const config = clone(DEFAULT_CONFIG);
   if (saved && typeof saved === "object") {
     for (const key of Object.keys(config)) {
@@ -180,36 +213,45 @@ function loadConfig(saved = readStorage(STORAGE_KEY)) {
 let config = loadConfig();
 
 // ---------- saving ----------
-// Player data (settings, the free plan and the real-time game) is saved in
-// this browser at once. Inside the claude.ai viewer, with a signed-in player,
-// it is also saved to that player's own records (the db capability, under
-// data/users/<id>/), which nobody else can read and which follow them to any
-// device. The account copy is loaded when the page opens.
+// Everything saves in this browser at once. Inside the claude.ai viewer, with
+// a signed-in player, it also saves to that player's own records (the db
+// capability, under data/users/<id>/), which nobody else can read and which
+// follow them to any device. Those are loaded when the page opens.
 
 const SAVES = {
-  settings: { local: STORAGE_KEY, browser: () => config, account: () => config, apply: applySettings },
-  plan: { local: PLAN_KEY, browser: () => plan, account: () => plan, apply: applyPlan },
-  game: { local: PLAY_KEY, browser: () => playLab.toJSON(), account: () => playLab.toCompactJSON(), apply: applyGame },
+  settings: { base: STORAGE_KEY, browser: () => config, account: () => config },
+  plan: { base: PLAN_KEY, browser: () => plan, account: () => plan },
+  game: { base: PLAY_KEY, browser: () => playLab.toJSON(), account: () => playLab.toCompactJSON() },
 };
 
 const cloud = {
-  doc: null, // (key) -> DocumentReference, once connected
+  db: null, // set once connected
+  uid: null,
   status: "local",
-  boot: {}, // key -> account copy as of page load, to spot changes made before the account answers
-  last: {}, // key -> account copy last read or written, to skip unchanged writes
-  queued: new Map(), // key -> body waiting to be written
-  busy: new Set(), // keys with a write in flight
+  boot: {}, // state at page load, to spot changes made before the records answer
+  last: {}, // write key -> copy last read or written, to skip unchanged writes
+  queued: new Map(), // write key -> { ref, body, json } waiting to be written
+  busy: new Set(), // write keys with a write in flight
   timer: null,
 };
+
+// The player's records: the account list, and each account's data. The
+// first account uses the documents saves had before accounts existed.
+function recordsRef(doc) {
+  return cloud.db.collection(`data/users/${cloud.uid}`).doc(doc);
+}
+function accountRef(id, key) {
+  return id === "main" ? recordsRef(key) : recordsRef("accounts").collection(id).doc(key);
+}
 
 const SAVE_TEXT = {
   local: "Saved in this browser",
   loading: "Loading your saved data…",
-  saving: "Saving to your account…",
-  saved: "Saved to your account",
-  readonly: "Saved in this browser only: you need Contributor access to save to your account",
-  full: "Your account storage for this page is full. Saved in this browser.",
-  error: "Couldn't reach your account. Saved in this browser.",
+  saving: "Saving to your claude.ai account…",
+  saved: "Saved to your claude.ai account",
+  readonly: "Saved in this browser only: you need Contributor access to save to your claude.ai account",
+  full: "Your claude.ai storage for this page is full. Saved in this browser.",
+  error: "Couldn't reach your claude.ai account. Saved in this browser.",
 };
 
 function setSaveStatus(status) {
@@ -220,26 +262,36 @@ function setSaveStatus(status) {
   node.textContent = SAVE_TEXT[status];
 }
 
-function save(key) {
-  const s = SAVES[key];
-  writeStorage(s.local, s.browser());
-  if (!cloud.doc || cloud.status === "readonly" || cloud.status === "full") return;
-  const data = s.account();
+function queueWrite(writeKey, ref, data) {
+  if (!cloud.db || cloud.status === "readonly" || cloud.status === "full") return;
   const json = JSON.stringify(data);
-  if (json === cloud.last[key]) return;
-  cloud.queued.set(key, { body: { v: 2, savedAt: Date.now(), data }, json });
+  if (json === cloud.last[writeKey]) return;
+  cloud.queued.set(writeKey, { ref, body: { v: 2, savedAt: Date.now(), data }, json });
   setSaveStatus("saving");
   // One write per pause: taps in quick succession become one save.
   clearTimeout(cloud.timer);
   cloud.timer = setTimeout(flushSaves, 700);
 }
 
+function save(key) {
+  const s = SAVES[key];
+  const id = accounts.active;
+  writeStorage(localKey(s.base, id), s.browser());
+  queueWrite(`${id}/${key}`, () => accountRef(id, key), s.account());
+}
+
+function saveAccounts() {
+  writeStorage(ACCOUNTS_KEY, accounts);
+  queueWrite("accounts", () => recordsRef("accounts"), accounts);
+}
+
 function flushSaves() {
+  clearTimeout(cloud.timer);
   for (const [key, item] of cloud.queued) {
     if (cloud.busy.has(key)) continue; // written again once the current write finishes
     cloud.queued.delete(key);
     cloud.busy.add(key);
-    writeAccount(key, item).finally(() => {
+    writeRecord(key, item).finally(() => {
       cloud.busy.delete(key);
       if (cloud.queued.size) flushSaves();
       else if (!cloud.busy.size && cloud.status === "saving") setSaveStatus("saved");
@@ -247,14 +299,14 @@ function flushSaves() {
   }
 }
 
-async function writeAccount(key, item, retried = false) {
+async function writeRecord(key, item, retried = false) {
   try {
-    await cloud.doc(key).set(item.body);
+    await item.ref().set(item.body);
     cloud.last[key] = item.json;
   } catch (e) {
     if (e?.code === "unavailable" && !retried) {
       await new Promise((r) => setTimeout(r, 800 + Math.random() * 1200));
-      return writeAccount(key, item, true);
+      return writeRecord(key, item, true);
     }
     // invalid_argument here means this viewer may not write their records
     // (a Viewer or Commenter on a shared page).
@@ -262,58 +314,138 @@ async function writeAccount(key, item, retried = false) {
   }
 }
 
+// One account's saved data, from the records when connected (they win),
+// otherwise from this browser.
+async function readAccountData(id) {
+  const data = {};
+  for (const key of ACCOUNT_DATA) data[key] = readStorage(localKey(SAVES[key].base, id));
+  if (!cloud.db) return data;
+  try {
+    const snaps = await Promise.all(ACCOUNT_DATA.map((key) => accountRef(id, key).get()));
+    ACCOUNT_DATA.forEach((key, i) => {
+      const saved = snaps[i].exists ? snaps[i].data()?.data : undefined;
+      if (!saved) return;
+      data[key] = saved;
+      cloud.last[`${id}/${key}`] = JSON.stringify(saved);
+    });
+  } catch {
+    setSaveStatus("error");
+  }
+  return data;
+}
+
+// Make `data` the state on screen. A game may be a full browser save or a
+// compact records save; anything missing starts from zero.
+function applyAccountData(data) {
+  config = loadConfig(data.settings ?? null);
+  plan = loadPlan(data.plan ?? null);
+  playLab = (data.game && (Lab.fromCompactJSON(catalog, config, data.game) || Lab.fromJSON(catalog, config, data.game)))
+    || new Lab(catalog, config);
+  for (const key of ACCOUNT_DATA) writeStorage(localKey(SAVES[key].base), SAVES[key].browser());
+  if ($("#detail").open) $("#detail").close();
+  buildSettings();
+  run();
+  renderPlay();
+}
+
 // Connect to the player's records, load what's there, and upload what this
-// browser has that the account doesn't.
+// browser has that the records don't.
 async function connectAccount() {
   if (!window.claude?.use) return; // not inside the claude.ai viewer
   setSaveStatus("loading");
   const [db, user] = await Promise.all([window.claude.use("db"), window.claude.use("user")]).catch(() => [null, null]);
   const uid = user ? await user.id().catch(() => null) : null;
   if (!db || !uid) return setSaveStatus("local");
-  const records = db.collection(`data/users/${uid}`);
-  let snaps;
+  Object.assign(cloud, { db, uid });
+  let listSnap;
   try {
-    snaps = await Promise.all(Object.keys(SAVES).map((key) => records.doc(key).get()));
+    listSnap = await recordsRef("accounts").get();
   } catch {
+    cloud.db = null;
     return setSaveStatus("error");
   }
-  cloud.doc = (key) => records.doc(key);
   setSaveStatus("saved");
-  let loaded = false;
-  Object.keys(SAVES).forEach((key, i) => {
-    const saved = snaps[i].exists ? snaps[i].data()?.data : undefined;
-    const changedHere = JSON.stringify(SAVES[key].account()) !== cloud.boot[key];
-    if (saved && !changedHere) {
-      cloud.last[key] = JSON.stringify(saved);
-      SAVES[key].apply(saved);
-      loaded = true;
-    } else {
-      save(key); // first save to this account, or changed here before it answered
-    }
-  });
-  if (loaded) {
-    renderPlay();
-    refreshDetail();
+
+  const savedList = listSnap.exists ? listSnap.data()?.data : undefined;
+  if (savedList && JSON.stringify(accounts) === cloud.boot.accounts) {
+    cloud.last.accounts = JSON.stringify(savedList);
+    accounts = loadAccounts(savedList);
+    writeStorage(ACCOUNTS_KEY, accounts);
   }
+  saveAccounts(); // first save to the records, or changed here before they answered
+  renderAccounts();
+
+  // The open account: the records' copy wins unless it was changed here
+  // after the page opened.
+  const id = accounts.active;
+  const fromRecords = await readAccountData(id);
+  const sameAccount = id === cloud.boot.active;
+  const data = {};
+  let changed = !sameAccount;
+  for (const key of ACCOUNT_DATA) {
+    const editedHere = sameAccount && JSON.stringify(SAVES[key].account()) !== cloud.boot[key];
+    const recorded = `${id}/${key}` in cloud.last;
+    if (sameAccount && (editedHere || !recorded)) data[key] = SAVES[key].account();
+    else {
+      data[key] = fromRecords[key];
+      changed = true;
+    }
+  }
+  if (changed) applyAccountData(data);
+  for (const key of ACCOUNT_DATA) save(key);
+  refreshDetail();
 }
 
-function applySettings(saved) {
-  config = loadConfig(saved);
-  writeStorage(STORAGE_KEY, config);
-  buildSettings();
-  run();
+async function switchAccount(id) {
+  if (id === accounts.active || !accounts.list.some((a) => a.id === id)) return;
+  flushSaves(); // the account being left is saved first
+  accounts.active = id;
+  saveAccounts();
+  renderAccounts();
+  setAccountsBusy(true);
+  const data = await readAccountData(id);
+  if (accounts.active !== id) return; // switched again meanwhile
+  applyAccountData(data);
+  setAccountsBusy(false);
+  const name = activeAccount().name;
+  planMessage = `Switched to ${name}.`;
+  lastMessage = `Switched to ${name}.`;
+  renderPlay();
 }
 
-function applyPlan(saved) {
-  plan = loadPlan(saved);
-  writeStorage(PLAN_KEY, plan);
+function createAccount(name) {
+  if (accounts.list.length >= MAX_ACCOUNTS) return null;
+  const id = Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+  accounts.list.push({ id, name: cleanName(name) || `Account ${accounts.list.length + 1}` });
+  saveAccounts();
+  return id;
 }
 
-function applyGame(saved) {
-  const lab = Lab.fromCompactJSON(catalog, config, saved);
-  if (!lab) return;
-  playLab = lab;
-  writeStorage(PLAY_KEY, playLab.toJSON());
+function renameAccount(id, name) {
+  const account = accounts.list.find((a) => a.id === id);
+  const clean = cleanName(name);
+  if (!account || !clean || clean === account.name) return;
+  account.name = clean;
+  saveAccounts();
+  renderAccounts();
+}
+
+async function deleteAccount(id) {
+  if (accounts.list.length <= 1 || !accounts.list.some((a) => a.id === id)) return;
+  if (id === accounts.active) await switchAccount(accounts.list.find((a) => a.id !== id).id);
+  accounts.list = accounts.list.filter((a) => a.id !== id);
+  saveAccounts();
+  for (const key of ACCOUNT_DATA) {
+    try {
+      localStorage.removeItem(localKey(SAVES[key].base, id));
+    } catch {
+      /* storage unavailable */
+    }
+    cloud.queued.delete(`${id}/${key}`);
+    delete cloud.last[`${id}/${key}`];
+    if (cloud.db) accountRef(id, key).delete().catch(() => setSaveStatus("error"));
+  }
+  renderAccounts();
 }
 
 const FIELD_GROUPS = [
@@ -942,7 +1074,7 @@ let playLab = null;
 let lastMessage = "";
 
 function loadPlay() {
-  const saved = readStorage(PLAY_KEY);
+  const saved = readStorage(localKey(PLAY_KEY));
   return (saved && Lab.fromJSON(catalog, config, saved)) || new Lab(catalog, config);
 }
 
@@ -1159,7 +1291,7 @@ let rules = readStorage(RULES_KEY) === "real" ? "real" : "plan";
 let plan = null;
 let planMessage = "";
 
-function loadPlan(saved = readStorage(PLAN_KEY)) {
+function loadPlan(saved = readStorage(localKey(PLAN_KEY))) {
   const levels = {};
   for (const [id, lvl] of Object.entries(saved?.levels || {})) {
     const node = catalog.byId.get(id);
@@ -1591,6 +1723,86 @@ function wireDetail() {
   });
 }
 
+// ---------- game accounts: controls ----------
+
+let deleteArmed = null; // account waiting for a second click to delete
+
+function renderAccounts({ dialog = true } = {}) {
+  const select = $("#acct-select");
+  select.replaceChildren(...accounts.list.map((a) => el("option", { value: a.id }, a.name)));
+  select.value = accounts.active;
+  if (dialog && $("#accounts").open) renderAccountsDialog();
+}
+
+function setAccountsBusy(busy) {
+  $("#acct-select").disabled = busy;
+  $("#acct").classList.toggle("is-busy", busy);
+}
+
+function renderAccountsDialog(message) {
+  $("#acct-list").replaceChildren(...accounts.list.map((a) => {
+    const current = a.id === accounts.active;
+    const name = el("input", { type: "text", id: `acct-name-${a.id}`, value: a.name, maxlength: 40, "aria-label": `Name of ${a.name}` });
+    name.addEventListener("change", () => renameAccount(a.id, name.value));
+    const armed = deleteArmed === a.id;
+    return el("li", { class: `acct-item${current ? " is-current" : ""}` },
+      name,
+      current
+        ? chip("active", "check", "Open now")
+        : el("button", { type: "button", class: "btn small", onclick: () => switchAccount(a.id) }, "Open"),
+      el("button", {
+        type: "button",
+        class: `btn small ${armed ? "danger" : "ghost"}`,
+        disabled: accounts.list.length <= 1,
+        title: accounts.list.length <= 1 ? "You need at least one account" : "",
+        onclick: () => armDelete(a.id),
+      }, armed ? "Click again to delete" : "Delete"));
+  }));
+  $("#acct-new").disabled = accounts.list.length >= MAX_ACCOUNTS;
+  $("#acct-new-name").placeholder = `Farm ${accounts.list.length}`;
+  if (message !== undefined) $("#acct-message").textContent = message;
+}
+
+let deleteTimer = null;
+async function armDelete(id) {
+  clearTimeout(deleteTimer);
+  if (deleteArmed !== id) {
+    deleteArmed = id;
+    renderAccountsDialog("");
+    deleteTimer = setTimeout(() => {
+      deleteArmed = null;
+      if ($("#accounts").open) renderAccountsDialog();
+    }, 4000);
+    return;
+  }
+  deleteArmed = null;
+  const name = accounts.list.find((a) => a.id === id)?.name;
+  await deleteAccount(id);
+  renderAccountsDialog(`Deleted ${name} and everything saved for it.`);
+}
+
+function wireAccounts() {
+  $("#acct-select").addEventListener("change", (e) => switchAccount(e.target.value));
+  $("#acct-manage").addEventListener("click", () => {
+    deleteArmed = null;
+    renderAccountsDialog("");
+    $("#accounts").showModal();
+  });
+  $("#accounts-close").addEventListener("click", () => $("#accounts").close());
+  $("#accounts").addEventListener("click", (e) => {
+    if (e.target === e.currentTarget) e.currentTarget.close(); // backdrop
+  });
+  $("#acct-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const input = $("#acct-new-name");
+    const id = createAccount(input.value);
+    if (!id) return renderAccountsDialog(`You can keep up to ${MAX_ACCOUNTS} accounts. Delete one to make room.`);
+    input.value = "";
+    await switchAccount(id);
+    renderAccountsDialog(`Created ${activeAccount().name}. It starts from zero, with default settings.`);
+  });
+}
+
 // ---------- boot ----------
 
 const initialTab = location.hash === "#play" || location.hash === "#auto"
@@ -1606,8 +1818,12 @@ $("#day").addEventListener("input", (e) => selectDay(Number(e.target.value)));
 $("#play").addEventListener("click", togglePlayback);
 playLab = loadPlay();
 plan = loadPlan();
-for (const key of Object.keys(SAVES)) cloud.boot[key] = JSON.stringify(SAVES[key].account());
+for (const key of ACCOUNT_DATA) cloud.boot[key] = JSON.stringify(SAVES[key].account());
+cloud.boot.accounts = JSON.stringify(accounts);
+cloud.boot.active = accounts.active;
 setSaveStatus("local");
+renderAccounts();
+wireAccounts();
 wirePlan();
 run();
 setTab(initialTab);
