@@ -27,10 +27,14 @@ const ICONS = {
 };
 
 // Resource glyphs: lightning bolt, coin, medal.
+// Six ball-tipped points round the centre of a 24-unit box.
+const SHERIFF_STAR = '<path d="M12 2.6L14.2 8.19L20.14 7.3L16.4 12L20.14 16.7L14.2 15.81L12 21.4L9.8 15.81L3.86 16.7L7.6 12L3.86 7.3L9.8 8.19z"/>' +
+  [[12, 2.6], [20.14, 7.3], [20.14, 16.7], [12, 21.4], [3.86, 16.7], [3.86, 7.3]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.5"/>`).join("");
 const RES_ICONS = {
   electricity: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M7.2 0.6L2.2 6.9h3.2L4.6 11.4l5.2-6.6H6.5z" fill="currentColor"/></svg>',
   zents: '<svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill="currentColor"/><path d="M4 4h4L4 8h4" fill="none" stroke="var(--surface)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-  badges: '<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3.5 0.8l2.5 4 2.5-4" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="6" cy="7.8" r="3.4" fill="currentColor"/><path d="M6 5.9l.6 1.2 1.3.2-1 .9.3 1.3L6 8.9l-1.2.6.3-1.3-1-.9 1.3-.2z" fill="var(--surface)"/></svg>',
+  // A gold sheriff's star: drawn once fat in the edge colour for its outline, then in gold.
+  badges: `<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="var(--res-badges-edge)" stroke="var(--res-badges-edge)" stroke-width="2" stroke-linejoin="round">${SHERIFF_STAR}</g><g fill="currentColor">${SHERIFF_STAR}</g><circle cx="12" cy="12" r="2.6" fill="none" stroke="var(--res-badges-edge)" stroke-width="1.3"/></svg>`,
 };
 
 // ---------- helpers ----------
