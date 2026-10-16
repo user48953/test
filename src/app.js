@@ -3,6 +3,7 @@ import {
   DAY, RESOURCES, Lab, buildCatalog, simulate, levelsAt, blocker, labLevelAt, progressMap,
   bonusTotals, researchBonus, treeProgress, treeRequirementText, meetsPct, researchDuration, formatDuration,
 } from "./sim.js";
+import { makeLock, openLock, seal, unseal, isSealed, isLock } from "./vault.js";
 
 // v2: the trees were rebuilt from the four sources, so saves from the old
 // made-up trees no longer apply.
@@ -176,7 +177,7 @@ function loadAccounts(saved = readStorage(ACCOUNTS_KEY)) {
   const list = (Array.isArray(saved?.list) ? saved.list : [])
     .filter((a) => typeof a?.id === "string" && /^[a-z0-9]{1,24}$/.test(a.id))
     .slice(0, MAX_ACCOUNTS)
-    .map((a) => ({ id: a.id, name: cleanName(a.name) || "Account" }));
+    .map((a) => ({ id: a.id, name: cleanName(a.name) || "Account", ...(isLock(a.lock) ? { lock: a.lock } : {}) }));
   if (!list.length) list.push({ id: "main", name: "Main account" });
   const active = list.some((a) => a.id === saved?.active) ? saved.active : list[0].id;
   return { list, active };
@@ -188,6 +189,21 @@ function cleanName(name) {
 
 let accounts = loadAccounts();
 const activeAccount = () => accounts.list.find((a) => a.id === accounts.active);
+const accountById = (id) => accounts.list.find((a) => a.id === id);
+
+// Accounts with a password: their data is encrypted (src/vault.js) before it
+// is saved anywhere. Keys live in memory for this visit only, so a reload
+// asks for the password again. Until a locked account is unlocked, nothing
+// is saved for it, so its encrypted data is never overwritten.
+const keys = new Map(); // account id -> CryptoKey
+const isLocked = (id) => Boolean(accountById(id)?.lock);
+const canSave = (id) => !isLocked(id) || keys.has(id);
+
+// A browser save, unless it is encrypted (those are read with the key).
+function readPlain(key) {
+  const value = readStorage(key);
+  return isSealed(value) ? null : value;
+}
 
 // Browser keys: the first account keeps the keys saves had before accounts
 // existed, so nothing saved earlier is lost.
@@ -195,7 +211,7 @@ function localKey(base, id = accounts.active) {
   return id === "main" ? base : `${base}:${id}`;
 }
 
-function loadConfig(saved = readStorage(localKey(STORAGE_KEY))) {
+function loadConfig(saved = readPlain(localKey(STORAGE_KEY))) {
   const config = clone(DEFAULT_CONFIG);
   if (saved && typeof saved === "object") {
     for (const key of Object.keys(config)) {
@@ -250,6 +266,7 @@ const SAVE_TEXT = {
   saving: "Saving to your claude.ai account…",
   saved: "Saved to your claude.ai account",
   readonly: "Saved in this browser only: you need Contributor access to save to your claude.ai account",
+  locked: "This account is locked. Enter its password to load and save it.",
   full: "Your claude.ai storage for this page is full. Saved in this browser.",
   error: "Couldn't reach your claude.ai account. Saved in this browser.",
 };
@@ -262,9 +279,10 @@ function setSaveStatus(status) {
   node.textContent = SAVE_TEXT[status];
 }
 
-function queueWrite(writeKey, ref, data) {
+// `json` is what decides whether anything changed: for encrypted data it is
+// the plain JSON, since every encryption differs.
+function queueWrite(writeKey, ref, data, json = JSON.stringify(data)) {
   if (!cloud.db || cloud.status === "readonly" || cloud.status === "full") return;
-  const json = JSON.stringify(data);
   if (json === cloud.last[writeKey]) return;
   cloud.queued.set(writeKey, { ref, body: { v: 2, savedAt: Date.now(), data }, json });
   setSaveStatus("saving");
@@ -276,8 +294,23 @@ function queueWrite(writeKey, ref, data) {
 function save(key) {
   const s = SAVES[key];
   const id = accounts.active;
+  if (!canSave(id)) return;
+  if (isLocked(id)) return saveSealed(id, key);
   writeStorage(localKey(s.base, id), s.browser());
   queueWrite(`${id}/${key}`, () => accountRef(id, key), s.account());
+}
+
+// Encrypted saves are async; only the latest one per document is written.
+const sealSeq = {};
+async function saveSealed(id, key) {
+  const writeKey = `${id}/${key}`;
+  const seq = (sealSeq[writeKey] = (sealSeq[writeKey] || 0) + 1);
+  // Encryption grows data by a third: keep a game well under the record limit.
+  const data = key === "game" ? playLab.toCompactJSON(170_000) : SAVES[key].account();
+  const sealed = await seal(keys.get(id), data);
+  if (sealSeq[writeKey] !== seq || !keys.has(id)) return; // superseded, or locked again meanwhile
+  writeStorage(localKey(SAVES[key].base, id), sealed);
+  queueWrite(writeKey, () => accountRef(id, key), sealed, JSON.stringify(data));
 }
 
 function saveAccounts() {
@@ -294,7 +327,7 @@ function flushSaves() {
     writeRecord(key, item).finally(() => {
       cloud.busy.delete(key);
       if (cloud.queued.size) flushSaves();
-      else if (!cloud.busy.size && cloud.status === "saving") setSaveStatus("saved");
+      else if (!cloud.busy.size && cloud.status === "saving") setSaveStatus(canSave(accounts.active) ? "saved" : "locked");
     });
   }
 }
@@ -315,21 +348,27 @@ async function writeRecord(key, item, retried = false) {
 }
 
 // One account's saved data, from the records when connected (they win),
-// otherwise from this browser.
+// otherwise from this browser, decrypted with the account's key.
 async function readAccountData(id) {
   const data = {};
+  const fromRecords = new Set();
   for (const key of ACCOUNT_DATA) data[key] = readStorage(localKey(SAVES[key].base, id));
-  if (!cloud.db) return data;
-  try {
-    const snaps = await Promise.all(ACCOUNT_DATA.map((key) => accountRef(id, key).get()));
-    ACCOUNT_DATA.forEach((key, i) => {
-      const saved = snaps[i].exists ? snaps[i].data()?.data : undefined;
-      if (!saved) return;
-      data[key] = saved;
-      cloud.last[`${id}/${key}`] = JSON.stringify(saved);
-    });
-  } catch {
-    setSaveStatus("error");
+  if (cloud.db) {
+    try {
+      const snaps = await Promise.all(ACCOUNT_DATA.map((key) => accountRef(id, key).get()));
+      ACCOUNT_DATA.forEach((key, i) => {
+        const saved = snaps[i].exists ? snaps[i].data()?.data : undefined;
+        if (!saved) return;
+        data[key] = saved;
+        fromRecords.add(key);
+      });
+    } catch {
+      setSaveStatus("error");
+    }
+  }
+  for (const key of ACCOUNT_DATA) {
+    if (isSealed(data[key])) data[key] = keys.has(id) ? await unseal(keys.get(id), data[key]).catch(() => null) : null;
+    if (fromRecords.has(key) && data[key]) cloud.last[`${id}/${key}`] = JSON.stringify(data[key]);
   }
   return data;
 }
@@ -341,7 +380,7 @@ function applyAccountData(data) {
   plan = loadPlan(data.plan ?? null);
   playLab = (data.game && (Lab.fromCompactJSON(catalog, config, data.game) || Lab.fromJSON(catalog, config, data.game)))
     || new Lab(catalog, config);
-  for (const key of ACCOUNT_DATA) writeStorage(localKey(SAVES[key].base), SAVES[key].browser());
+  for (const key of ACCOUNT_DATA) save(key);
   if ($("#detail").open) $("#detail").close();
   buildSettings();
   run();
@@ -375,9 +414,16 @@ async function connectAccount() {
   saveAccounts(); // first save to the records, or changed here before they answered
   renderAccounts();
 
+  // A locked account loads once its password is entered.
+  const id = accounts.active;
+  forgetPlainCopies();
+  if (isLocked(id) && !keys.has(id)) {
+    applyAccountData({}); // whatever is on screen isn't this account's to show
+    return promptUnlock(id);
+  }
+
   // The open account: the records' copy wins unless it was changed here
   // after the page opened.
-  const id = accounts.active;
   const fromRecords = await readAccountData(id);
   const sameAccount = id === cloud.boot.active;
   const data = {};
@@ -398,6 +444,10 @@ async function connectAccount() {
 
 async function switchAccount(id) {
   if (id === accounts.active || !accounts.list.some((a) => a.id === id)) return;
+  if (isLocked(id) && !keys.has(id)) {
+    renderAccounts({ dialog: false }); // keep showing the open account until unlocked
+    return promptUnlock(id);
+  }
   flushSaves(); // the account being left is saved first
   accounts.active = id;
   saveAccounts();
@@ -430,9 +480,14 @@ function renameAccount(id, name) {
   renderAccounts();
 }
 
+// Resolves false when there is no unlocked account to move to.
 async function deleteAccount(id) {
-  if (accounts.list.length <= 1 || !accounts.list.some((a) => a.id === id)) return;
-  if (id === accounts.active) await switchAccount(accounts.list.find((a) => a.id !== id).id);
+  if (accounts.list.length <= 1 || !accounts.list.some((a) => a.id === id) || !canSave(id)) return false;
+  if (id === accounts.active) {
+    const next = accounts.list.find((a) => a.id !== id && canSave(a.id));
+    if (!next) return false;
+    await switchAccount(next.id);
+  }
   accounts.list = accounts.list.filter((a) => a.id !== id);
   saveAccounts();
   for (const key of ACCOUNT_DATA) {
@@ -445,7 +500,125 @@ async function deleteAccount(id) {
     delete cloud.last[`${id}/${key}`];
     if (cloud.db) accountRef(id, key).delete().catch(() => setSaveStatus("error"));
   }
+  keys.delete(id);
   renderAccounts();
+  return true;
+}
+
+// ---------- account passwords ----------
+
+// Unencrypted browser copies of a locked account are stale (the password was
+// set elsewhere): drop them.
+function forgetPlainCopies() {
+  for (const account of accounts.list) {
+    if (!account.lock) continue;
+    for (const key of ACCOUNT_DATA) {
+      const local = localKey(SAVES[key].base, account.id);
+      const value = readStorage(local);
+      if (value && !isSealed(value)) {
+        try {
+          localStorage.removeItem(local);
+        } catch {
+          /* storage unavailable */
+        }
+      }
+    }
+  }
+}
+
+// Save every part of the open account again, to the records too, after its
+// password changed: encrypted with the new key, or plain once removed.
+function resaveAccount() {
+  const id = accounts.active;
+  for (const key of ACCOUNT_DATA) {
+    delete cloud.last[`${id}/${key}`];
+    save(key);
+  }
+}
+
+const MIN_PASSWORD = 6;
+
+async function setPassword(password) {
+  const account = activeAccount();
+  const { key, lock } = await makeLock(password);
+  keys.set(account.id, key);
+  account.lock = lock;
+  saveAccounts();
+  resaveAccount();
+}
+
+async function checkPassword(password) {
+  const account = activeAccount();
+  return Boolean(account.lock && (await openLock(account.lock, password)));
+}
+
+function removePassword() {
+  const account = activeAccount();
+  delete account.lock;
+  keys.delete(account.id);
+  saveAccounts();
+  resaveAccount();
+}
+
+// Forget the open account's key: its data leaves the screen until the
+// password is entered again.
+function lockNow() {
+  const id = accounts.active;
+  if (!isLocked(id)) return;
+  flushSaves();
+  keys.delete(id);
+  applyAccountData({});
+  promptUnlock(id);
+}
+
+let unlockTarget = null;
+
+function promptUnlock(id) {
+  if ($("#unlock").open && unlockTarget === id) return renderLockState(); // already asking
+  unlockTarget = id;
+  const account = accountById(id);
+  $("#unlock-name").textContent = account.name;
+  $("#unlock-password").value = "";
+  $("#unlock-message").textContent = "";
+  if ($("#accounts").open) $("#accounts").close();
+  if (!$("#unlock").open) $("#unlock").showModal();
+  $("#unlock-password").focus();
+  renderLockState();
+}
+
+async function submitUnlock() {
+  const id = unlockTarget;
+  const account = accountById(id);
+  const button = $("#unlock-go");
+  if (!account?.lock) return $("#unlock").close();
+  button.disabled = true;
+  button.textContent = "Checking…";
+  const key = await openLock(account.lock, $("#unlock-password").value);
+  button.disabled = false;
+  button.textContent = "Unlock";
+  if (!key) {
+    $("#unlock-message").textContent = "That password isn't right. Try again.";
+    $("#unlock-password").select();
+    return;
+  }
+  keys.set(id, key);
+  $("#unlock").close();
+  if (id === accounts.active) {
+    applyAccountData(await readAccountData(id));
+    planMessage = lastMessage = `Unlocked ${account.name}.`;
+    renderPlay();
+  } else {
+    await switchAccount(id);
+  }
+  renderLockState();
+}
+
+// The header shows an Unlock button while the open account is locked.
+function renderLockState() {
+  const locked = !canSave(accounts.active);
+  $("#acct-unlock").hidden = !locked;
+  if (locked) setSaveStatus("locked");
+  else if (cloud.status === "locked") setSaveStatus(cloud.db ? "saved" : "local");
 }
 
 const FIELD_GROUPS = [
@@ -1074,7 +1247,7 @@ let playLab = null;
 let lastMessage = "";
 
 function loadPlay() {
-  const saved = readStorage(localKey(PLAY_KEY));
+  const saved = readPlain(localKey(PLAY_KEY));
   return (saved && Lab.fromJSON(catalog, config, saved)) || new Lab(catalog, config);
 }
 
@@ -1291,7 +1464,7 @@ let rules = readStorage(RULES_KEY) === "real" ? "real" : "plan";
 let plan = null;
 let planMessage = "";
 
-function loadPlan(saved = readStorage(localKey(PLAN_KEY))) {
+function loadPlan(saved = readPlain(localKey(PLAN_KEY))) {
   const levels = {};
   for (const [id, lvl] of Object.entries(saved?.levels || {})) {
     const node = catalog.byId.get(id);
@@ -1729,8 +1902,9 @@ let deleteArmed = null; // account waiting for a second click to delete
 
 function renderAccounts({ dialog = true } = {}) {
   const select = $("#acct-select");
-  select.replaceChildren(...accounts.list.map((a) => el("option", { value: a.id }, a.name)));
+  select.replaceChildren(...accounts.list.map((a) => el("option", { value: a.id }, canSave(a.id) ? a.name : `${a.name} (locked)`)));
   select.value = accounts.active;
+  renderLockState();
   if (dialog && $("#accounts").open) renderAccountsDialog();
 }
 
@@ -1745,22 +1919,85 @@ function renderAccountsDialog(message) {
     const name = el("input", { type: "text", id: `acct-name-${a.id}`, value: a.name, maxlength: 40, "aria-label": `Name of ${a.name}` });
     name.addEventListener("change", () => renameAccount(a.id, name.value));
     const armed = deleteArmed === a.id;
+    const deletable = accounts.list.length > 1 && canSave(a.id);
     return el("li", { class: `acct-item${current ? " is-current" : ""}` },
-      name,
+      el("div", { class: "acct-name" },
+        a.lock ? el("span", { class: "acct-lock", title: keys.has(a.id) ? "Has a password · unlocked" : "Has a password · locked" }, icon("lock")) : null,
+        name),
       current
         ? chip("active", "check", "Open now")
         : el("button", { type: "button", class: "btn small", onclick: () => switchAccount(a.id) }, "Open"),
       el("button", {
         type: "button",
         class: `btn small ${armed ? "danger" : "ghost"}`,
-        disabled: accounts.list.length <= 1,
-        title: accounts.list.length <= 1 ? "You need at least one account" : "",
+        disabled: !deletable,
+        title: accounts.list.length <= 1 ? "You need at least one account" : !canSave(a.id) ? "Unlock it with its password to delete it" : "",
         onclick: () => armDelete(a.id),
       }, armed ? "Click again to delete" : "Delete"));
   }));
   $("#acct-new").disabled = accounts.list.length >= MAX_ACCOUNTS;
   $("#acct-new-name").placeholder = `Farm ${accounts.list.length}`;
   if (message !== undefined) $("#acct-message").textContent = message;
+  renderPasswordSection();
+}
+
+// The password form for the open account.
+function renderPasswordSection(message) {
+  const account = activeAccount();
+  const field = (id, label, autocomplete) => el("div", { class: "pw-field" },
+    el("label", { for: id }, label),
+    el("input", { type: "password", id, autocomplete, minlength: MIN_PASSWORD }));
+  $("#pw-name").textContent = account.name;
+  if (!canSave(account.id)) {
+    $("#pw-hint").textContent = "Unlock this account to change its password.";
+    $("#pw-fields").replaceChildren();
+    $("#pw-actions").replaceChildren();
+  } else if (!account.lock) {
+    $("#pw-hint").textContent = `A password encrypts this account's settings, plan and game before they're saved, so nobody can open them without it, including anyone else using this browser or your claude.ai sign-in. Account names stay visible. If you forget the password, this account's data can't be recovered.`;
+    $("#pw-fields").replaceChildren(
+      field("pw-new", `New password (at least ${MIN_PASSWORD} characters)`, "new-password"),
+      field("pw-repeat", "Repeat it", "new-password"));
+    $("#pw-actions").replaceChildren(el("button", { type: "submit", class: "btn primary", value: "set" }, "Set password"));
+  } else {
+    $("#pw-hint").textContent = "This account has a password and is unlocked until you reload or lock it. Enter the current password to change or remove it. If you forget it, this account's data can't be recovered.";
+    $("#pw-fields").replaceChildren(
+      field("pw-current", "Current password", "current-password"),
+      field("pw-new", "New password", "new-password"),
+      field("pw-repeat", "Repeat new password", "new-password"));
+    $("#pw-actions").replaceChildren(
+      el("button", { type: "submit", class: "btn primary", value: "change" }, "Change password"),
+      el("button", { type: "submit", class: "btn", value: "remove" }, "Remove password"),
+      el("button", { type: "button", class: "btn ghost", onclick: () => lockNow() }, icon("lock"), "Lock now"));
+  }
+  if (message !== undefined) $("#pw-message").textContent = message;
+}
+
+async function submitPassword(action) {
+  const value = (id) => $(`#${id}`)?.value ?? "";
+  const say = (text) => ($("#pw-message").textContent = text);
+  const wantsNew = action === "set" || action === "change";
+  if (wantsNew && value("pw-new").length < MIN_PASSWORD) return say(`Use at least ${MIN_PASSWORD} characters.`);
+  if (wantsNew && value("pw-new") !== value("pw-repeat")) return say("The two new passwords don't match.");
+  for (const b of $("#pw-actions").querySelectorAll("button")) b.disabled = true;
+  say("Working…");
+  try {
+    if (action !== "set" && !(await checkPassword(value("pw-current")))) return say("The current password isn't right.");
+    const name = activeAccount().name;
+    if (action === "remove") {
+      removePassword();
+      renderAccountsDialog();
+      renderPasswordSection(`Removed the password from ${name}. Its data is saved unencrypted again.`);
+    } else {
+      await setPassword(value("pw-new"));
+      renderAccountsDialog();
+      renderPasswordSection(action === "set"
+        ? `${name} now has a password. Its data is encrypted wherever it's saved.`
+        : `Changed the password for ${name}.`);
+    }
+    renderAccounts({ dialog: false });
+  } finally {
+    for (const b of $("#pw-actions").querySelectorAll("button")) b.disabled = false;
+  }
 }
 
 let deleteTimer = null;
@@ -1777,8 +2014,10 @@ async function armDelete(id) {
   }
   deleteArmed = null;
   const name = accounts.list.find((a) => a.id === id)?.name;
-  await deleteAccount(id);
-  renderAccountsDialog(`Deleted ${name} and everything saved for it.`);
+  const deleted = await deleteAccount(id);
+  renderAccountsDialog(deleted
+    ? `Deleted ${name} and everything saved for it.`
+    : "Unlock or create another account first, so there's one to open instead.");
 }
 
 function wireAccounts() {
@@ -1791,6 +2030,21 @@ function wireAccounts() {
   $("#accounts-close").addEventListener("click", () => $("#accounts").close());
   $("#accounts").addEventListener("click", (e) => {
     if (e.target === e.currentTarget) e.currentTarget.close(); // backdrop
+  });
+  $("#acct-unlock").addEventListener("click", () => promptUnlock(accounts.active));
+  $("#unlock-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitUnlock();
+  });
+  $("#unlock-other").addEventListener("click", () => {
+    $("#unlock").close();
+    deleteArmed = null;
+    renderAccountsDialog("");
+    $("#accounts").showModal();
+  });
+  $("#pw-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    submitPassword(e.submitter?.value);
   });
   $("#acct-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -1824,6 +2078,7 @@ cloud.boot.active = accounts.active;
 setSaveStatus("local");
 renderAccounts();
 wireAccounts();
+if (isLocked(accounts.active)) promptUnlock(accounts.active);
 wirePlan();
 run();
 setTab(initialTab);

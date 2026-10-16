@@ -25,6 +25,16 @@ use **Manage accounts** to create, rename, open or delete one (up to 20). Each
 account has its own settings, free plan and real-time game; a new one starts from
 zero with default settings. Switching saves the account you're leaving first.
 
+**Account passwords**: in **Manage accounts** you can give the open account a
+password (at least 6 characters), change it, remove it, or lock the account again.
+A password encrypts that account's settings, plan and game in your browser before
+they're saved anywhere (AES-256-GCM, key derived from the password with PBKDF2,
+310,000 rounds; see `src/vault.js`). Without the password nobody can open them,
+including anyone else using your browser or your claude.ai sign-in. Account names
+stay readable. The password is never stored, so if you forget it, that account's
+data can't be recovered. An unlocked account stays unlocked until you reload or
+lock it; a locked one shows an **Unlock** button and saves nothing until unlocked.
+
 **Saving**: your settings, your free plan and your real-time game save as you go.
 On the published claude.ai page, signed in, they save to your own records for the
 page, which nobody else can read (not even the page's owner) and which follow you
@@ -158,7 +168,9 @@ before writing. `npm test` then checks the result.
 | `assets/trees/` | Each tree's in-game Laboratory card art, copied from ztools.co.uk by the build |
 | `src/data.js` | Timer estimate and default settings |
 | `src/sim.js` | Engine: the `Lab` game state and the `simulate()` auto plan (no DOM) |
+| `src/vault.js` | Account password encryption (Web Crypto) |
 | `src/app.js` | UI: settings, free planning, real-time play, auto plan, chart, tree map, research details |
 | `scripts/fetch-sources.sh` | Downloads the four sources into `sources/raw/` |
 | `scripts/build-research-data.mjs` | Builds `src/research-data.js` from them |
 | `tests/sim.test.js` | Data and simulator tests (`node --test`) |
+| `tests/vault.test.js` | Encryption tests |

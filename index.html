@@ -137,7 +137,7 @@ button, input, select { font: inherit; color: inherit; }
   padding: 5px 8px;
   font-weight: 600;
 }
-.acct select { max-width: 22ch; }
+.acct select { max-width: 26ch; }
 .acct.is-busy select { opacity: 0.6; }
 .acct-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 20px; }
 @media (max-width: 560px) { .acct-body { padding: 16px; } }
@@ -149,7 +149,18 @@ button, input, select { font: inherit; color: inherit; }
 .acct-form label { font-size: var(--step--1); font-weight: 600; }
 .acct-form input { flex: 1 1 160px; }
 .btn.danger { border-color: var(--warn); color: var(--warn); }
-@media (max-width: 480px) { .acct-item { grid-template-columns: minmax(0, 1fr) auto; } .acct-item input { grid-column: 1 / -1; } }
+.acct-name { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.acct-name input { flex: 1 1 auto; }
+.acct-lock { display: inline-flex; color: var(--muted); }
+.pw { display: grid; gap: 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+.pw h3 { font-family: var(--font-display); font-size: var(--step-1); text-transform: uppercase; letter-spacing: 0.03em; }
+.pw-form { display: grid; gap: 10px; }
+.pw-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 8px; }
+.pw-field { display: grid; gap: 4px; min-width: 0; }
+.pw-field label { font-size: var(--step--1); font-weight: 600; }
+.pw-field input { width: 100%; min-width: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; }
+#unlock { width: min(440px, calc(100vw - 24px)); }
+@media (max-width: 480px) { .acct-item { grid-template-columns: minmax(0, 1fr) auto; } .acct-item .acct-name { grid-column: 1 / -1; } }
 .save-status { display: inline-flex; align-items: center; gap: 7px; margin: 0; max-width: 42ch; font-family: var(--font-data); font-size: 0.75rem; color: var(--muted); }
 .save-status::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .save-status[data-state="saved"]::before { background: var(--good); }
@@ -602,6 +613,7 @@ footer p { max-width: 75ch; margin: 0; }
         <label class="eyebrow" for="acct-select">Game account</label>
         <div class="acct-row">
           <select id="acct-select"></select>
+          <button type="button" class="btn small primary" id="acct-unlock" hidden>Unlock</button>
           <button type="button" class="btn small" id="acct-manage">Manage accounts</button>
         </div>
       </div>
@@ -791,7 +803,35 @@ footer p { max-width: 75ch; margin: 0; }
       </div>
     </form>
     <p class="message" id="acct-message" role="status" aria-live="polite"></p>
+    <section class="pw" aria-labelledby="pw-title">
+      <h3 id="pw-title">Password for <span id="pw-name"></span></h3>
+      <p class="hint" id="pw-hint"></p>
+      <form class="pw-form" id="pw-form" novalidate>
+        <div class="pw-fields" id="pw-fields"></div>
+        <div class="acct-row" id="pw-actions"></div>
+      </form>
+      <p class="message" id="pw-message" role="status" aria-live="polite"></p>
+    </section>
   </div>
+</dialog>
+
+<dialog id="unlock" aria-labelledby="unlock-title">
+  <form class="acct-body" id="unlock-form" novalidate>
+    <div>
+      <div class="eyebrow">Locked account</div>
+      <h2 id="unlock-title">Unlock <span id="unlock-name"></span></h2>
+    </div>
+    <p class="hint">This account has a password. Its settings, plan and game stay encrypted until you enter it.</p>
+    <div class="pw-field">
+      <label for="unlock-password">Password</label>
+      <input type="password" id="unlock-password" autocomplete="current-password">
+    </div>
+    <p class="message" id="unlock-message" role="status" aria-live="polite"></p>
+    <div class="acct-row">
+      <button type="submit" class="btn primary" id="unlock-go">Unlock</button>
+      <button type="button" class="btn ghost" id="unlock-other">Open another account</button>
+    </div>
+  </form>
 </dialog>
 
 <dialog id="detail" aria-labelledby="detail-title">
